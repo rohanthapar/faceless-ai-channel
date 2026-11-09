@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Faceless AI Channel — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --brand: #6C63FF;
+      --brand-dim: #4f46c8;
+      --bg: #0f0f13;
+      --surface: #18181f;
+      --surface2: #22222d;
+      --border: #2a2a38;
+      --text: #e8e8f0;
+      --muted: #888899;
+      --success: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Layout */
+    .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+
+    /* Sidebar */
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 24px 16px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .sidebar-logo {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 8px 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+    .sidebar-logo .dot { width: 32px; height: 32px; border-radius: 50%; background: var(--brand); display: grid; place-items: center; font-size: 16px; }
+    .sidebar-logo span { font-weight: 700; font-size: 15px; color: var(--text); }
+    .nav-link {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; border-radius: 8px;
+      color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500;
+      transition: background .15s, color .15s;
+    }
+    .nav-link:hover, .nav-link.active { background: var(--surface2); color: var(--text); }
+    .nav-link.active { color: var(--brand); }
+
+    /* Main */
+    main { padding: 32px; overflow-y: auto; }
+    .page-header { margin-bottom: 28px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; }
+    .page-header p { color: var(--muted); font-size: 14px; margin-top: 4px; }
+
+    /* Stats grid */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px 24px;
+    }
+    .stat-card .label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    .stat-card .value { font-size: 32px; font-weight: 700; margin-top: 6px; }
+    .stat-card .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+    /* Tables */
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 24px; }
+    .section-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .section-header h2 { font-size: 15px; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px 20px; text-align: left; font-size: 13px; }
+    th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--border); }
+    tr:not(:last-child) td { border-bottom: 1px solid var(--border); }
+    tr:hover td { background: var(--surface2); }
+
+    /* Badges */
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 600; text-transform: capitalize;
+    }
+    .badge-candidate { background: #22222d; color: var(--muted); }
+    .badge-selected { background: #1e3a5f; color: #60a5fa; }
+    .badge-scripted { background: #1a3a2a; color: #4ade80; }
+    .badge-produced { background: #3b2f00; color: #fbbf24; }
+    .badge-published { background: #1a3a2a; color: var(--success); }
+    .badge-rejected { background: #3b1a1a; color: var(--danger); }
+    .badge-passed { background: #1a3a2a; color: var(--success); }
+    .badge-failed { background: #3b1a1a; color: var(--danger); }
+    .badge-pending { background: #22222d; color: var(--muted); }
+
+    /* Trigger button */
+    .btn {
+      padding: 8px 18px; border-radius: 8px; border: none; cursor: pointer;
+      font-size: 13px; font-weight: 600; font-family: inherit; transition: opacity .15s;
+    }
+    .btn-primary { background: var(--brand); color: #fff; }
+    .btn-primary:hover { opacity: .85; }
+
+    /* Toast */
+    #toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 20px; font-size: 14px;
+      display: none; z-index: 999;
+    }
+  </style>
+</head>
+<body>
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="dot">🤖</div>
+      <span>FacelessAI</span>
+    </div>
+    <a href="/" class="nav-link active">📊 Dashboard</a>
+    <a href="/api/topics/" class="nav-link">🧠 Topics</a>
+    <a href="/api/videos/" class="nav-link">🎬 Videos</a>
+    <a href="/api/analytics/summary" class="nav-link">📈 Analytics</a>
+    <a href="/docs" class="nav-link">📄 API Docs</a>
+  </aside>
+
+  <!-- Main -->
+  <main>
+    <div class="page-header">
+      <h1>Autonomous Pipeline Dashboard</h1>
+      <p>Monitor and control your AI-powered content channel</p>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats">
+      <div class="stat-card">
+        <div class="label">Topics Discovered</div>
+        <div class="value">{{ total_topics }}</div>
+        <div class="sub">all time</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Videos Produced</div>
+        <div class="value">{{ total_videos }}</div>
+        <div class="sub">all time</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Published</div>
+        <div class="value" style="color:var(--success)">{{ published }}</div>
+        <div class="sub">YouTube + Instagram</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Running Jobs</div>
+        <div class="value" style="color:var(--warn)">{{ running_jobs }}</div>
+        <div class="sub">active pipeline jobs</div>
+      </div>
+    </div>
+
+    <!-- Trigger pipeline -->
+    <div class="section" style="margin-bottom:24px; padding:20px; display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div style="font-weight:600; font-size:15px;">Run Pipeline Now</div>
+        <div style="color:var(--muted); font-size:13px; margin-top:4px;">Trigger the full daily pipeline immediately</div>
+      </div>
+      <button class="btn btn-primary" onclick="triggerPipeline()">▶ Run Pipeline</button>
+    </div>
+
+    <!-- Recent Topics -->
+    <div class="section">
+      <div class="section-header"><h2>Recent Topics</h2></div>
+      <table>
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Pillar</th>
+            <th>Score</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in recent_topics %}
+          <tr>
+            <td style="max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ t.title }}</td>
+            <td>{{ t.pillar.value }}</td>
+            <td>{{ "%.2f"|format(t.total_score) }}</td>
+            <td><span class="badge badge-{{ t.status.value }}">{{ t.status.value }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" style="color:var(--muted); text-align:center; padding:24px;">No topics yet — run the pipeline to discover content</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Recent Videos -->
+    <div class="section">
+      <div class="section-header"><h2>Recent Videos</h2></div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Topic</th>
+            <th>Duration</th>
+            <th>Quality</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for v in recent_videos %}
+          <tr>
+            <td>#{{ v.id }}</td>
+            <td>#{{ v.topic_id }}</td>
+            <td>{{ "%.1f"|format(v.duration or 0) }}s</td>
+            <td><span class="badge badge-{{ v.quality_status.value }}">{{ v.quality_status.value }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" style="color:var(--muted); text-align:center; padding:24px;">No videos produced yet</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<div id="toast">✅ Pipeline triggered!</div>
+
+<script>
+async function triggerPipeline() {
+  try {
+    const res = await fetch('/api/pipeline/run', { method: 'POST' });
+    const data = await res.json();
+    const toast = document.getElementById('toast');
+    toast.textContent = res.ok ? `✅ Pipeline queued — job ${data.job_id.slice(0,8)}` : `❌ Error: ${data.detail}`;
+    toast.style.display = 'block';
+    setTimeout(() => toast.style.display = 'none', 4000);
+  } catch (e) {
+    alert('Failed to trigger pipeline: ' + e.message);
+  }
+}
+</script>
+</body>
+</html>

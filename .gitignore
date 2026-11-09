@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables — NEVER commit
+.env
+
+# Secrets & credentials
+credentials/
+secrets/
+
+# Data & output (generated at runtime)
+data/
+output/drafts/
+output/rendered/
+output/published/
+
+# Logs
+logs/*.log
+*.log
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+
+# Alembic (keep migrations, ignore __pycache__ inside)
+migrations/__pycache__/
+
+# TTS models (large binary — download separately)
+assets/tts_models/
+
+# Thumbnails / renders cache
+assets/cache/

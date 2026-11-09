@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    container_name: faceless-ai-channel
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./credentials:/app/credentials:ro
+      - ./assets:/app/assets:ro
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=sqlite:////app/data/faceless.db
