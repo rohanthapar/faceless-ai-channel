@@ -6,6 +6,8 @@ precisely timed subtitle segments.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 from pathlib import Path
 
@@ -40,11 +42,26 @@ async def transcribe_audio(audio_path: Path) -> list[dict]:
         from faster_whisper import WhisperModel
 
         logger.info("Transcribing audio with faster-whisper...")
-        # Use tiny model for speed; CPU inference on Apple M1
-        model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        # base.en: accurate enough for clean TTS audio, ~1s per 10s of audio on an M1
+        model = WhisperModel("base.en", device="cpu", compute_type="int8")
+
+        # Decode with ffmpeg rather than faster-whisper's PyAV path, which breaks
+        # on PyAV >= 19 (removed the metadata_errors argument)
+        import numpy as np
+
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-v", "error", "-i", str(audio_path),
+            "-f", "f32le", "-ac", "1", "-ar", "16000", "-",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        pcm, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg decode failed: {stderr.decode()[-300:]}")
+        audio = np.frombuffer(pcm, dtype=np.float32)
 
         segments, _ = model.transcribe(
-            str(audio_path),
+            audio,
             word_timestamps=True,
             language="en",
         )
@@ -105,6 +122,7 @@ def _group_words_into_lines(
                 "text": " ".join(w["text"] for w in current_group),
                 "start": current_group[0]["start"],
                 "end": current_group[-1]["end"],
+                "words": current_group,
             })
             current_group = []
             current_chars = 0
@@ -112,11 +130,23 @@ def _group_words_into_lines(
         current_group.append(word)
         current_chars += word_chars
 
+        # Never let a caption run across a sentence boundary
+        if word_text.endswith((".", "!", "?")):
+            groups.append({
+                "text": " ".join(w["text"] for w in current_group),
+                "start": current_group[0]["start"],
+                "end": current_group[-1]["end"],
+                "words": current_group,
+            })
+            current_group = []
+            current_chars = 0
+
     if current_group:
         groups.append({
             "text": " ".join(w["text"] for w in current_group),
             "start": current_group[0]["start"],
             "end": current_group[-1]["end"],
+            "words": current_group,
         })
 
     return groups
@@ -147,13 +177,17 @@ def _script_to_timed_segments(
         size = -(-len(words) // n_chunks)
         for i in range(0, len(words), size):
             chunk = words[i:i + size]
-            duration = (len(chunk) / total_words) * total_duration
+            per_word = total_duration / total_words
             segments.append({
                 "text": " ".join(chunk),
                 "start": elapsed,
-                "end": elapsed + duration,
+                "end": elapsed + per_word * len(chunk),
+                "words": [
+                    {"text": w, "start": elapsed + j * per_word, "end": elapsed + (j + 1) * per_word}
+                    for j, w in enumerate(chunk)
+                ],
             })
-            elapsed += duration
+            elapsed += per_word * len(chunk)
 
     return segments
 
@@ -228,11 +262,12 @@ async def generate_subtitles(
     """
     Generate both SRT and ASS subtitle files for a video.
 
-    Returns dict with 'srt' and 'ass' keys pointing to generated files.
+    Returns dict with 'srt', 'ass' and 'words' (word-timed caption JSON) paths.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     srt_path = output_dir / "subtitles.srt"
     ass_path = output_dir / "subtitles.ass"
+    words_path = output_dir / "captions_words.json"
 
     # Try accurate transcription first
     words = await transcribe_audio(audio_path)
@@ -255,7 +290,9 @@ async def generate_subtitles(
         video_height=settings.video_height,
     )
 
-    return {"srt": srt_path, "ass": ass_path}
+    words_path.write_text(json.dumps(segments), encoding="utf-8")
+
+    return {"srt": srt_path, "ass": ass_path, "words": words_path}
 
 
 from app.config import settings  # noqa: E402 (avoid circular imports)

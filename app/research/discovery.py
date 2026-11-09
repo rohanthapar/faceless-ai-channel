@@ -48,8 +48,10 @@ FEED_REGISTRY: dict[ContentPillar, list[dict]] = {
         {"url": "https://feeds.a.dj.com/rss/RSSWSJD.xml", "name": "WSJ Tech", "reliability": 0.88},
         {"url": "https://spectrum.ieee.org/feeds/feed.rss", "name": "IEEE Spectrum", "reliability": 0.95},
         {"url": "https://venturebeat.com/feed/", "name": "VentureBeat", "reliability": 0.78},
-        # General-science feeds live here, not under PSYCHOLOGY — otherwise physics
-        # stories get psychology-framed scripts with invented "brain" angles.
+    ],
+    # General-science feeds live here, not under PSYCHOLOGY — otherwise physics
+    # stories get psychology-framed scripts with invented "brain" angles.
+    ContentPillar.SCIENCE: [
         {"url": "https://www.scientificamerican.com/rss/", "name": "Scientific American", "reliability": 0.90},
         {"url": "https://www.newscientist.com/feed/home/", "name": "New Scientist", "reliability": 0.88},
         {"url": "https://feeds.nature.com/NatureMostRead", "name": "Nature", "reliability": 0.95},

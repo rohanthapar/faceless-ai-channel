@@ -9,8 +9,10 @@ Considers:
 """
 from __future__ import annotations
 
+import json
 import random
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +35,7 @@ def _pillar_targets(settings_obj=None) -> dict[ContentPillar, float]:
         ContentPillar.HISTORY: s.pillar_history_pct / 100,
         ContentPillar.TECHNOLOGY: s.pillar_technology_pct / 100,
         ContentPillar.STORYTELLING: s.pillar_storytelling_pct / 100,
+        ContentPillar.SCIENCE: s.pillar_science_pct / 100,
     }
 
 
@@ -118,11 +121,62 @@ async def _save_topic_to_db(
     return topic
 
 
+TOPIC_BANK_PATH = Path(__file__).with_name("topic_bank.json")
+
+
+async def _pick_from_bank(
+    db: AsyncSession,
+    target_pillar: ContentPillar,
+    used_titles: set[str],
+) -> Topic | None:
+    """Pick an unused evergreen topic from the curated bank, preferring the target pillar."""
+    try:
+        bank = json.loads(TOPIC_BANK_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("Topic bank unavailable: %s", exc)
+        return None
+
+    fresh = [t for t in bank if t["title"].lower() not in used_titles]
+    in_pillar = [t for t in fresh if t["pillar"] == target_pillar.value]
+    if not (in_pillar or fresh):
+        logger.warning("Topic bank exhausted — falling back to news feeds")
+        return None
+
+    entry = random.choice(in_pillar or fresh)
+    topic = Topic(
+        title=entry["title"],
+        summary=entry["summary"],
+        pillar=ContentPillar(entry["pillar"]),
+        source_urls=[f"https://en.wikipedia.org/wiki/{entry['source']}"],
+        source_dates=[],
+        factual_claims=[entry["summary"]],
+        verification_notes="Curated evergreen topic bank",
+        reliability_score=0.95,
+        trend_score=0.0,
+        total_score=0.95,
+        status=TopicStatus.SELECTED,
+    )
+    db.add(topic)
+    await db.commit()
+    await db.refresh(topic)
+    logger.info("✅ Selected bank topic [id=%d, %s]: %s", topic.id, topic.pillar.value, topic.title)
+    return topic
+
+
 async def select_daily_topic(db: AsyncSession) -> Topic | None:
     """
-    Main entry point: collect, score, verify and select today's topic.
+    Main entry point: pick today's topic.
+    Evergreen topic bank first; news feeds (collect, score, verify) as fallback.
     Returns the selected Topic ORM instance, or None if none qualify.
     """
+    used_titles = await _get_used_titles(db)
+    target_pillar = _choose_target_pillar(_pillar_targets(), await _get_recent_pillar_counts(db))
+    logger.info("Target pillar for today: %s", target_pillar.value)
+
+    topic = await _pick_from_bank(db, target_pillar, used_titles)
+    if topic:
+        return topic
+
     logger.info("Starting topic discovery and selection...")
 
     # Collect raw topics from feeds
@@ -138,15 +192,6 @@ async def select_daily_topic(db: AsyncSession) -> Topic | None:
     if not scored_topics:
         logger.error("No topics passed minimum score threshold")
         return None
-
-    # Get dedup set
-    used_titles = await _get_used_titles(db)
-
-    # Get pillar targets and recent distribution
-    targets = _pillar_targets()
-    recent_counts = await _get_recent_pillar_counts(db)
-    target_pillar = _choose_target_pillar(targets, recent_counts)
-    logger.info("Target pillar for today: %s", target_pillar.value)
 
     # Filter: prefer target pillar, but fall back to best overall
     pillar_topics = [s for s in scored_topics if s.raw.pillar == target_pillar]

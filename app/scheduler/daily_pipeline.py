@@ -44,6 +44,7 @@ from app.media.voice_generator import generate_narration, get_audio_duration
 from app.media.image_generator import fetch_assets_for_scene
 from app.media.subtitle_generator import generate_subtitles
 from app.editor.video_composer import compose_video
+from app.quality.content_reviewer import review_video
 from app.quality.video_validator import validate_video
 from app.publishing.youtube import upload_video as youtube_upload
 from app.publishing.instagram import publish_reel
@@ -270,6 +271,8 @@ class DailyPipeline:
             music_path=music_path,
             # Homebrew ffmpeg ships without libass, so the SRT/Pillow fallback is required
             srt_subtitle_path=subtitle_files.get("srt"),
+            hook_text=script.hook,
+            caption_words_path=subtitle_files.get("words"),
         )
 
         if not ok:
@@ -301,7 +304,14 @@ class DailyPipeline:
 
     # ── Stage: QUALITY_CHECK ──────────────────────────────────────────────────
 
-    async def stage_quality_check(self, video: Video, video_path: Path, script: Script) -> bool:
+    async def stage_quality_check(
+        self,
+        video: Video,
+        video_path: Path,
+        script: Script,
+        topic: Topic,
+        metadata: VideoMetadata | None,
+    ) -> bool:
         logger.info("[8/10] Running quality checks...")
         report = await validate_video(video_path, script_text=script.script)
 
@@ -313,6 +323,15 @@ class DailyPipeline:
             failed = [k for k, v in report.checks.items() if not v]
             logger.error("Quality FAILED: %s", failed)
             raise PipelineError(f"Quality checks failed: {failed}")
+
+        if settings.review_enabled:
+            review = await review_video(video_path, topic, script, metadata)
+            video.quality_report = {**report.to_dict(), "content_review": review.to_dict()}
+            if not review.passed:
+                video.quality_status = QualityStatus.FAILED
+            await self.db.commit()
+            if not review.passed:
+                raise PipelineError(f"Content review failed {review.scores}: {review.issues}")
 
         await self._save_stage("PUBLISH_YOUTUBE")
         logger.info("Quality checks PASSED")
@@ -477,7 +496,7 @@ class DailyPipeline:
                 metadata = await self.stage_generate_metadata(video, topic, script)
 
             # ─ QUALITY_CHECK ──────────────────────────────
-            await self.stage_quality_check(video, video_path, script)
+            await self.stage_quality_check(video, video_path, script, topic, metadata)
 
             # ─ PUBLISH_YOUTUBE ────────────────────────────
             yt_pub = await self.stage_publish_youtube(video, video_path, metadata)

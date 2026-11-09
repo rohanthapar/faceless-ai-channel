@@ -57,18 +57,20 @@ class Settings(BaseSettings):
     reddit_user_agent: str = "faceless-ai-channel/1.0"
 
     # ── Content Pillars ──────────────────────────────────────
-    pillar_psychology_pct: int = 30
+    pillar_psychology_pct: int = 10
     pillar_history_pct: int = 25
-    pillar_technology_pct: int = 25
-    pillar_storytelling_pct: int = 20
+    pillar_technology_pct: int = 15
+    pillar_storytelling_pct: int = 15
+    pillar_science_pct: int = 35
 
-    @field_validator("pillar_storytelling_pct")
+    @field_validator("pillar_science_pct")
     @classmethod
     def pillars_sum_100(cls, v: int, info) -> int:
         total = (
-            info.data.get("pillar_psychology_pct", 30)
+            info.data.get("pillar_psychology_pct", 10)
             + info.data.get("pillar_history_pct", 25)
-            + info.data.get("pillar_technology_pct", 25)
+            + info.data.get("pillar_technology_pct", 15)
+            + info.data.get("pillar_storytelling_pct", 15)
             + v
         )
         if total != 100:
@@ -83,14 +85,20 @@ class Settings(BaseSettings):
     video_width: int = 1080
     video_height: int = 1920
     video_fps: int = 30
-    video_min_duration: int = 25
-    video_max_duration: int = 40
+    video_min_duration: int = 15
+    video_max_duration: int = 35
     video_bitrate: str = "4000k"
     audio_bitrate: str = "192k"
 
     # ── TTS ──────────────────────────────────────────────────
     tts_primary_provider: Literal["piper", "edge", "none"] = "edge"
     edge_tts_voice: str = "en-US-AriaNeural"
+    edge_tts_rate: str = "+0%"  # e.g. "+12%" for a punchier Shorts pace
+
+    # ── AI content review (blocks upload below these 1-10 scores) ──
+    review_enabled: bool = True
+    review_min_overall: float = 6.0
+    review_min_accuracy: float = 7.0
     piper_model_path: Path = ROOT_DIR / "assets" / "tts_models" / "en_US-lessac-medium.onnx"
 
     # ── Brand ────────────────────────────────────────────────

@@ -12,12 +12,12 @@ import textwrap
 from dataclasses import dataclass
 
 from app.config import settings
+from app.content.gemini import generate_text
 from app.database import ContentPillar, Script, Topic
 from app.logger import get_logger
 
 logger = get_logger("content.scriptwriter")
 
-GEMINI_MODEL = "gemini-3.8-flash"
 
 
 @dataclass
@@ -51,6 +51,10 @@ PILLAR_GUIDANCE = {
         "Tell a compelling real-world story with clear beginning, middle, and end. "
         "Prioritise narrative tension and resolution."
     ),
+    ContentPillar.SCIENCE: (
+        "Focus on space, nature, animals, the human body and physics. Lead with the "
+        "most jaw-dropping concrete detail and make scale tangible with comparisons."
+    ),
 }
 
 
@@ -64,11 +68,11 @@ def _estimate_duration(text: str) -> float:
 
 
 def _hook_score(hook: str) -> float:
-    curiosity_words = ["what if", "did you know", "why", "how", "secret",
-                       "truth", "actually", "never", "surprising", "shocking"]
+    curiosity_words = ["what if", "why", "how", "secret", "truth", "actually",
+                       "never", "nobody", "impossible", "?"]
     score = sum(1 for w in curiosity_words if w in hook.lower()) * 0.3
     words = len(hook.split())
-    if 8 <= words <= 15:
+    if 3 <= words <= 7:  # on-screen hook text must be readable in ~1 second
         score += 1.0
     return score
 
@@ -91,13 +95,16 @@ Content pillar: {topic.pillar.value}
 Pillar guidance: {guidance}
 
 Requirements:
-- Write for a 35-40 second video at natural narration pace (~135 words/minute)
-- Target 80-90 spoken words total — never more than 90
-- Structure: Hook (1 strong sentence) → 3-4 punchy facts or story beats → Payoff/CTA
-- Natural conversational English — not formal or robotic
-- No "Hey guys", "In today's video", "Don't forget to like" phrases
-- Strong opening hook that creates immediate curiosity
-- One clear central idea explored with enough depth to fill 35-40 seconds
+- Write for a 20-30 second video at natural narration pace (~135 words/minute)
+- Target 55-70 spoken words total — never more than 70
+- Structure: Hook → 2-3 punchy beats that escalate → twist/payoff line
+- The FIRST sentence is the spoken hook: max 12 words, states the most surprising
+  part immediately (no slow build-up, no "Did you know", no "Imagine")
+- The LAST sentence must flow back into the first sentence, so when the Short
+  loops it sounds continuous (e.g. ends on a setup that the opening line answers)
+- No "follow for more", "subscribe", "Hey guys", "In today's video" phrases
+- Natural conversational English — short sentences, not formal or robotic
+- One clear central idea
 - Only write facts that are plausibly true — do not invent statistics
 - Stay faithful to the topic and summary above. Do NOT invent a different angle,
   named concepts, or claims that are not supported by the source. If the pillar
@@ -105,8 +112,9 @@ Requirements:
 - Make every word count — no filler, no padding
 
 Generate exactly:
-1. THREE different hook openings (one sentence each, max 15 words)
-2. TWO complete scripts (each 80-90 words)
+1. THREE on-screen hook texts shown in big letters on the first frame
+   (3-7 words each, punchy, creates a curiosity gap, not a copy of the first sentence)
+2. TWO complete scripts (each 55-70 words)
 3. Score each script 0.0-1.0 on: clarity, originality, retention_potential
 
 Respond ONLY in this exact JSON format with no markdown:
@@ -129,12 +137,7 @@ Respond ONLY in this exact JSON format with no markdown:
 }}"""
 
     try:
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-        )
-        raw = response.text.strip()
+        raw = await generate_text(prompt)
 
         # Strip markdown code fences if present
         raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)

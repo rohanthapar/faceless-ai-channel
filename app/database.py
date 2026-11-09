@@ -63,6 +63,7 @@ class ContentPillar(str, enum.Enum):
     HISTORY = "history"
     TECHNOLOGY = "technology"
     STORYTELLING = "storytelling"
+    SCIENCE = "science"
 
 
 class TopicStatus(str, enum.Enum):

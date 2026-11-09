@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.config import settings
+from app.content.gemini import generate_text
 from app.database import Script, Storyboard
 from app.logger import get_logger
 
@@ -182,7 +183,8 @@ async def _gemini_storyboard(script: Script) -> list[Scene] | None:
         return None
 
     total_duration = script.estimated_duration or 35.0
-    target_scenes = max(6, min(8, int(total_duration / 5)))
+    # A new visual every ~3s keeps Shorts viewers from swiping away
+    target_scenes = max(7, min(12, round(total_duration / 3)))
 
     prompt = f"""You are a cinematic storyboard director for a short-form vertical video (9:16, {total_duration:.0f} seconds).
 
@@ -222,12 +224,7 @@ Respond ONLY as a JSON array with no markdown:
 ]"""
 
     try:
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-        )
-        raw = response.text.strip()
+        raw = await generate_text(prompt)
         raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
         raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
 

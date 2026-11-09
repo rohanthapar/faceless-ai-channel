@@ -23,7 +23,7 @@ logger = get_logger("media.voice_generator")
 
 def _get_audio_cache_path(text: str, voice: str) -> Path:
     """Return a deterministic cache path for a given text+voice combo."""
-    hash_key = hashlib.sha256(f"{voice}::{text}".encode()).hexdigest()[:16]
+    hash_key = hashlib.sha256(f"{voice}::{settings.edge_tts_rate}::{text}".encode()).hexdigest()[:16]
     cache_dir = settings.output_drafts / "audio_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / f"{hash_key}.mp3"
@@ -34,8 +34,16 @@ async def _edge_tts_generate(text: str, voice: str, output_path: Path) -> bool:
     try:
         import edge_tts
 
-        communicate = edge_tts.Communicate(text, voice)
-        await communicate.save(str(output_path))
+        # Edge TTS sporadically returns NoAudioReceived; a quick retry usually succeeds
+        for attempt in range(3):
+            try:
+                communicate = edge_tts.Communicate(text, voice, rate=settings.edge_tts_rate)
+                await communicate.save(str(output_path))
+                break
+            except edge_tts.exceptions.NoAudioReceived:
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(2)
         logger.info("Edge TTS generated: %s", output_path.name)
         return True
     except ImportError:

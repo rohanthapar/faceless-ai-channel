@@ -24,6 +24,7 @@ def test_pillar_percentages_sum_to_100():
         + s.pillar_history_pct
         + s.pillar_technology_pct
         + s.pillar_storytelling_pct
+        + s.pillar_science_pct
     )
     assert total == 100
 

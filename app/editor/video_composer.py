@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -276,6 +277,193 @@ def _parse_srt(srt_path: Path) -> list[dict]:
     return segments
 
 
+def _load_font(size: int):
+    """Load a bold system TTF; fall back to PIL's small default font."""
+    from PIL import ImageFont
+
+    for font_path in [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ]:
+        try:
+            return ImageFont.truetype(font_path, size)
+        except (IOError, OSError):
+            continue
+    logger.warning("No TTF font found — using PIL default (smaller)")
+    return ImageFont.load_default()
+
+
+async def _burn_karaoke_captions(
+    video_path: Path,
+    words_path: Path,
+    output_path: Path,
+) -> bool:
+    """Burn word-by-word highlighted captions (the current word turns yellow).
+
+    One PNG is rendered per spoken word, the PNGs are sequenced with ffmpeg's
+    concat demuxer using word timings, and the result is overlaid in a single
+    pass. Needs no libass/freetype, which Homebrew's ffmpeg lacks.
+    """
+    from PIL import Image, ImageDraw
+
+    segments = json.loads(words_path.read_text(encoding="utf-8"))
+    if not segments:
+        return False
+
+    font = _load_font(76)
+    strip_w, strip_h, line_gap, max_w = W, 300, 14, W - 140
+    space = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textlength(" ", font=font)
+
+    png_dir = output_path.parent / "karaoke_pngs"
+    png_dir.mkdir(exist_ok=True)
+    blank = png_dir / "blank.png"
+    Image.new("RGBA", (strip_w, strip_h), (0, 0, 0, 0)).save(blank)
+
+    def render(words: list[str], active: int, dest: Path) -> None:
+        img = Image.new("RGBA", (strip_w, strip_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        # Lay words out into centred lines
+        lines: list[list[int]] = [[]]
+        for i, word in enumerate(words):
+            trial = " ".join(words[j] for j in lines[-1] + [i])
+            if lines[-1] and draw.textlength(trial, font=font) > max_w:
+                lines.append([])
+            lines[-1].append(i)
+        line_h = font.size + line_gap
+        y = (strip_h - line_h * len(lines)) // 2
+        for line in lines:
+            line_w = draw.textlength(" ".join(words[j] for j in line), font=font)
+            x = (strip_w - line_w) / 2
+            for j in line:
+                colour = (255, 221, 0, 255) if j == active else (255, 255, 255, 255)
+                draw.text((x, y), words[j], font=font, fill=colour,
+                          stroke_width=6, stroke_fill=(0, 0, 0, 255))
+                x += draw.textlength(words[j], font=font) + space
+            y += line_h
+        img.save(dest)
+
+    # Build concat list: one entry per word, blanks for silent gaps
+    entries: list[tuple[Path, float]] = []
+    t = 0.0
+    n = 0
+    for seg in segments:
+        words = [w["text"].upper() for w in seg["words"]]
+        for k, w in enumerate(seg["words"]):
+            start = max(w["start"], t)
+            if start - t > 0.05:
+                entries.append((blank, start - t))
+            end = seg["words"][k + 1]["start"] if k + 1 < len(seg["words"]) else w["end"]
+            end = max(end, start + 0.05)
+            png = png_dir / f"w{n:04d}.png"
+            render(words, k, png)
+            entries.append((png, end - start))
+            t, n = end, n + 1
+    entries.append((blank, 1.0))
+
+    list_path = png_dir / "list.txt"
+    lines = [f"file '{p}'\nduration {d:.3f}" for p, d in entries]
+    lines.append(f"file '{entries[-1][0]}'")  # concat demuxer needs the last file repeated
+    list_path.write_text("\n".join(lines), encoding="utf-8")
+
+    y = int(H * 0.62)  # above the Shorts UI that covers the bottom of the frame
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-f", "concat", "-safe", "0", "-i", str(list_path),
+        "-filter_complex",
+        f"[1:v]fps={FPS},format=rgba[cap];[0:v][cap]overlay=0:{y}:eof_action=pass[v]",
+        "-map", "[v]",
+        "-map", "0:a",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "18",
+        "-c:a", "copy",
+        "-pix_fmt", "yuv420p",
+        str(output_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    shutil.rmtree(png_dir, ignore_errors=True)
+
+    if proc.returncode != 0:
+        logger.error("Karaoke caption overlay failed: %s", stderr.decode()[-800:])
+        return False
+
+    logger.info("✅ Karaoke captions burned (%d words)", n)
+    return output_path.exists()
+
+
+async def _burn_hook_text(
+    video_path: Path,
+    hook_text: str,
+    output_path: Path,
+    seconds: float = 2.5,
+) -> bool:
+    """Overlay the hook as big text on the opening seconds — the swipe-or-stay moment."""
+    from PIL import Image, ImageDraw
+
+    font = _load_font(92)
+    draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+    lines: list[str] = []
+    for word in hook_text.upper().split():
+        trial = f"{lines[-1]} {word}" if lines else word
+        if lines and draw.textlength(trial, font=font) <= W - 160:
+            lines[-1] = trial
+        else:
+            lines.append(word)
+    text = "\n".join(lines)
+
+    bbox = draw.multiline_textbbox((0, 0), text, font=font, align="center", spacing=14)
+    tw, th = int(bbox[2] - bbox[0]), int(bbox[3] - bbox[1])  # Pillow may return floats
+    pad = 36
+    img = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle((0, 0, img.width, img.height), radius=28, fill=(0, 0, 0, 170))
+    draw.multiline_text(
+        (pad - bbox[0], pad - bbox[1]), text, font=font, align="center", spacing=14,
+        fill=(255, 221, 0, 255), stroke_width=3, stroke_fill=(0, 0, 0, 255),
+    )
+    png_path = output_path.with_suffix(".hook.png")
+    img.save(str(png_path), "PNG")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-i", str(png_path),
+        "-filter_complex",
+        f"[0:v][1:v]overlay=(W-w)/2:H*0.22:enable='between(t,0,{seconds})'[v]",
+        "-map", "[v]",
+        "-map", "0:a",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "18",
+        "-c:a", "copy",
+        "-pix_fmt", "yuv420p",
+        str(output_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    png_path.unlink(missing_ok=True)
+
+    if proc.returncode != 0:
+        logger.error("Hook text overlay failed: %s", stderr.decode()[-500:])
+        return False
+
+    logger.info("✅ Hook text burned: %s", hook_text)
+    return output_path.exists()
+
+
 async def _burn_subtitles_pillow(
     video_path: Path,
     srt_path: Path,
@@ -299,23 +487,7 @@ async def _burn_subtitles_pillow(
     png_dir = output_path.parent / "caption_pngs"
     png_dir.mkdir(exist_ok=True)
 
-    # Try to load a system font; fall back to PIL default
-    font_size = 56
-    font: ImageFont.FreeTypeFont | ImageFont.ImageFont
-    for font_path in [
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    ]:
-        try:
-            font = ImageFont.truetype(font_path, font_size)
-            break
-        except (IOError, OSError):
-            continue
-    else:
-        logger.warning("No TTF font found — using PIL default (smaller)")
-        font = ImageFont.load_default()
+    font = _load_font(56)
 
     overlay_specs: list[dict] = []
 
@@ -498,6 +670,8 @@ async def compose_video(
     music_path: Path | None = None,
     temp_dir: Path | None = None,
     srt_subtitle_path: Path | None = None,
+    hook_text: str | None = None,
+    caption_words_path: Path | None = None,
 ) -> bool:
     """
     Full video composition pipeline.
@@ -573,7 +747,11 @@ async def compose_video(
 
         # Step 4: Burn subtitles (ASS with libass fallback → SRT drawtext → no captions)
         sub_out = temp_dir / "with_subtitles.mp4"
-        if ass_subtitle_path.exists():
+        if caption_words_path and caption_words_path.exists() and await _burn_karaoke_captions(
+            audio_out, caption_words_path, sub_out,
+        ):
+            source_for_norm = sub_out
+        elif ass_subtitle_path.exists():
             await _burn_subtitles(
                 audio_out, ass_subtitle_path, sub_out,
                 srt_path=srt_subtitle_path,
@@ -584,6 +762,12 @@ async def compose_video(
             source_for_norm = sub_out if sub_out.exists() else audio_out
         else:
             source_for_norm = audio_out
+
+        # Step 4b: Hook text card over the opening seconds
+        if hook_text:
+            hook_out = temp_dir / "with_hook.mp4"
+            if await _burn_hook_text(source_for_norm, hook_text, hook_out):
+                source_for_norm = hook_out
 
         # Step 5: Loudness normalization
         norm_out = temp_dir / "normalized.mp4"
