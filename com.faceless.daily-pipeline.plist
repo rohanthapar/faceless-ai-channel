@@ -19,6 +19,13 @@
   <key>WorkingDirectory</key>
   <string>/Users/bawa/Desktop/Projects/faceless-ai-channel</string>
 
+  <!-- launchd's default PATH omits Homebrew, where ffmpeg/ffprobe live -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
   <!-- Run every day at 06:30 PM IST -->
   <key>StartCalendarInterval</key>
   <dict>
