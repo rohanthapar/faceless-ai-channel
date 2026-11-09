@@ -50,6 +50,24 @@ from app.publishing.instagram import publish_reel
 
 logger = get_logger("scheduler.daily_pipeline")
 
+
+def _retime_scenes(scenes: list[dict], audio_duration: float) -> list[dict]:
+    """Stretch scene timings to cover the real narration length.
+
+    The storyboard is timed from the script's *estimated* duration; if the
+    narration runs longer, ffmpeg's -shortest would cut the audio off.
+    Scenes are weighted by their narration word count so visuals stay in sync.
+    """
+    total = audio_duration + 0.5  # small tail so the last word isn't clipped
+    weights = [max(len(s.get("narration_segment", "").split()), 1) for s in scenes]
+    weight_sum = sum(weights)
+    retimed, t = [], 0.0
+    for scene, w in zip(scenes, weights):
+        dur = total * w / weight_sum
+        retimed.append({**scene, "start_time": round(t, 2), "end_time": round(t + dur, 2), "duration": round(dur, 2)})
+        t += dur
+    return retimed
+
 STAGES = [
     "SELECT_TOPIC",
     "WRITE_SCRIPT",
@@ -243,13 +261,15 @@ class DailyPipeline:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         ok = await compose_video(
-            scenes=storyboard.scene_data,
+            scenes=_retime_scenes(storyboard.scene_data, actual_duration),
             asset_paths=asset_paths,
             asset_types=asset_types,
             narration_path=audio_path,
             ass_subtitle_path=subtitle_files.get("ass", Path("/nonexistent")),
             output_path=output_path,
             music_path=music_path,
+            # Homebrew ffmpeg ships without libass, so the SRT/Pillow fallback is required
+            srt_subtitle_path=subtitle_files.get("srt"),
         )
 
         if not ok:

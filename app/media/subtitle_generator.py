@@ -140,15 +140,20 @@ def _script_to_timed_segments(
     segments = []
     elapsed = 0.0
 
+    # Short ~5-word chunks (never crossing a sentence) read better on Shorts
     for sentence in sentences:
-        words = len(sentence.split())
-        duration = (words / total_words) * total_duration
-        segments.append({
-            "text": sentence,
-            "start": elapsed,
-            "end": elapsed + duration,
-        })
-        elapsed += duration
+        words = sentence.split()
+        n_chunks = max(1, round(len(words) / 5))
+        size = -(-len(words) // n_chunks)
+        for i in range(0, len(words), size):
+            chunk = words[i:i + size]
+            duration = (len(chunk) / total_words) * total_duration
+            segments.append({
+                "text": " ".join(chunk),
+                "start": elapsed,
+                "end": elapsed + duration,
+            })
+            elapsed += duration
 
     return segments
 

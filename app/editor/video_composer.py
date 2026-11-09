@@ -320,12 +320,23 @@ async def _burn_subtitles_pillow(
     overlay_specs: list[dict] = []
 
     for idx, seg in enumerate(segments):
-        text = seg["text"].replace("\\n", "\n").replace("\\'", "'").replace("\\:", ":")
+        text = seg["text"].replace("\\n", " ").replace("\n", " ").replace("\\'", "'").replace("\\:", ":")
         png_path = png_dir / f"cap_{idx:03d}.png"
 
         # Measure text size
         dummy = Image.new("RGBA", (1, 1))
         draw = ImageDraw.Draw(dummy)
+
+        # Word-wrap so long captions don't run off the frame edges
+        lines: list[str] = []
+        for word in text.split():
+            trial = f"{lines[-1]} {word}" if lines else word
+            if lines and draw.textlength(trial, font=font) <= W - 120:
+                lines[-1] = trial
+            else:
+                lines.append(word)
+        text = "\n".join(lines)
+
         bbox = draw.textbbox((0, 0), text, font=font, align="center")
         tw = bbox[2] - bbox[0] + 40   # padding
         th = bbox[3] - bbox[1] + 24
@@ -352,7 +363,7 @@ async def _burn_subtitles_pillow(
             "png": png_path,
             "start": seg["start"],
             "end": seg["end"],
-            "y": int(H * 0.82),   # lower third
+            "y": int(H * 0.88) - img.height,   # lower third, grows upward when wrapped
         })
 
     # Build FFmpeg filter_complex with one overlay per segment

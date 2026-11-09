@@ -196,7 +196,10 @@ For each scene provide:
 - narration_segment: exact words from the script for this scene
 - visual_description: specific cinematic shot description (not generic)
 - subject: main visual subject (concrete noun)
-- search_keywords: 3-5 specific keywords to find stock footage (be specific, not generic)
+- search_keywords: 3-5 literal stock-photo search terms (2-3 words each) for things a
+  photographer could actually shoot that directly show what the narration says
+  (e.g. "physics laboratory laser", "whirlpool water") — no metaphors, moods,
+  glitch effects or abstract concepts that stock sites won't have
 - camera_angle: (close-up / medium / wide / aerial / macro)
 - camera_movement: pick one from [slow push-in, dolly forward, subtle zoom, parallax drift, pan left, pan right, tracking, atmospheric float]
 - lighting: specific lighting description

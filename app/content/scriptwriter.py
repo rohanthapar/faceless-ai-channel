@@ -55,7 +55,7 @@ PILLAR_GUIDANCE = {
 
 
 def _words_per_minute() -> float:
-    return 150.0  # conversational narration pace
+    return 135.0  # measured TTS pace: 100 words ≈ 44s
 
 
 def _estimate_duration(text: str) -> float:
@@ -91,19 +91,22 @@ Content pillar: {topic.pillar.value}
 Pillar guidance: {guidance}
 
 Requirements:
-- Write for a 35-40 second video at natural narration pace (~150 words/minute)
-- Target 90-110 spoken words total
+- Write for a 35-40 second video at natural narration pace (~135 words/minute)
+- Target 80-90 spoken words total — never more than 90
 - Structure: Hook (1 strong sentence) → 3-4 punchy facts or story beats → Payoff/CTA
 - Natural conversational English — not formal or robotic
 - No "Hey guys", "In today's video", "Don't forget to like" phrases
 - Strong opening hook that creates immediate curiosity
 - One clear central idea explored with enough depth to fill 35-40 seconds
 - Only write facts that are plausibly true — do not invent statistics
+- Stay faithful to the topic and summary above. Do NOT invent a different angle,
+  named concepts, or claims that are not supported by the source. If the pillar
+  guidance doesn't fit the topic, follow the topic, not the guidance.
 - Make every word count — no filler, no padding
 
 Generate exactly:
 1. THREE different hook openings (one sentence each, max 15 words)
-2. TWO complete scripts (each 90-110 words)
+2. TWO complete scripts (each 80-90 words)
 3. Score each script 0.0-1.0 on: clarity, originality, retention_potential
 
 Respond ONLY in this exact JSON format with no markdown:

@@ -30,10 +30,6 @@ FEED_REGISTRY: dict[ContentPillar, list[dict]] = {
         {"url": "https://www.apa.org/news/feeds/index.aspx", "name": "APA News", "reliability": 0.95},
         {"url": "https://www.psychologytoday.com/us/articles/rss", "name": "Psychology Today", "reliability": 0.80},
         {"url": "https://feeds.feedburner.com/PsychCentral", "name": "PsychCentral", "reliability": 0.75},
-        {"url": "https://www.scientificamerican.com/rss/", "name": "Scientific American", "reliability": 0.90},
-        {"url": "https://www.newscientist.com/feed/home/", "name": "New Scientist", "reliability": 0.88},
-        {"url": "https://feeds.nature.com/NatureMostRead", "name": "Nature", "reliability": 0.95},
-        {"url": "https://rss.sciencemag.org/rss/current.xml", "name": "Science Magazine", "reliability": 0.95},
     ],
     ContentPillar.HISTORY: [
         {"url": "https://www.smithsonianmag.com/rss/history/", "name": "Smithsonian History", "reliability": 0.90},
@@ -52,6 +48,12 @@ FEED_REGISTRY: dict[ContentPillar, list[dict]] = {
         {"url": "https://feeds.a.dj.com/rss/RSSWSJD.xml", "name": "WSJ Tech", "reliability": 0.88},
         {"url": "https://spectrum.ieee.org/feeds/feed.rss", "name": "IEEE Spectrum", "reliability": 0.95},
         {"url": "https://venturebeat.com/feed/", "name": "VentureBeat", "reliability": 0.78},
+        # General-science feeds live here, not under PSYCHOLOGY — otherwise physics
+        # stories get psychology-framed scripts with invented "brain" angles.
+        {"url": "https://www.scientificamerican.com/rss/", "name": "Scientific American", "reliability": 0.90},
+        {"url": "https://www.newscientist.com/feed/home/", "name": "New Scientist", "reliability": 0.88},
+        {"url": "https://feeds.nature.com/NatureMostRead", "name": "Nature", "reliability": 0.95},
+        {"url": "https://rss.sciencemag.org/rss/current.xml", "name": "Science Magazine", "reliability": 0.95},
     ],
     ContentPillar.STORYTELLING: [
         {"url": "https://feeds.bbci.co.uk/news/world/rss.xml", "name": "BBC World", "reliability": 0.90},

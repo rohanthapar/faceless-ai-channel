@@ -3,6 +3,7 @@ app/content/metadata_generator.py — Generate platform-specific metadata using 
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
@@ -104,10 +105,20 @@ Respond ONLY as JSON with no markdown:
 
     try:
         client = genai.Client(api_key=settings.gemini_api_key)
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-        )
+        # Gemini intermittently returns 503 UNAVAILABLE; falling back means the
+        # raw news headline becomes the YouTube title, so retry before giving up.
+        for attempt in range(4):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-3.8-flash",
+                    contents=prompt,
+                )
+                break
+            except Exception as exc:
+                if attempt == 3 or "503" not in str(exc):
+                    raise
+                logger.warning("Gemini metadata 503 — retrying in %ds", 30 * (attempt + 1))
+                await asyncio.sleep(30 * (attempt + 1))
         raw = response.text.strip()
         raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
         raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
