@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     piper_model_path: Path = ROOT_DIR / "assets" / "tts_models" / "en_US-lessac-medium.onnx"
 
     # ── Brand ────────────────────────────────────────────────
-    channel_name: str = "MindBlown Facts"
+    channel_name: str = "MindGlitched AI"
     brand_color: str = "#6C63FF"
     caption_font: str = "Montserrat-Bold"
     caption_size: int = 52
