@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # ── YouTube ──────────────────────────────────────────────
     youtube_client_secret_file: Path = ROOT_DIR / "credentials" / "youtube_client_secret.json"
     youtube_token_file: Path = ROOT_DIR / "credentials" / "youtube_token.json"
+    youtube_channel_id: str = "UCaM6eKRWzVABL-mxuggJPTg"
+    youtube_channel_url: str = "https://www.youtube.com/@MindGlitchedAI"
     youtube_default_privacy: Literal["private", "unlisted", "public"] = "private"
     youtube_production_mode: bool = False
 
@@ -74,7 +76,7 @@ class Settings(BaseSettings):
         return v
 
     # ── Scheduler ────────────────────────────────────────────
-    daily_pipeline_time: str = "09:00"
+    daily_pipeline_time: str = "18:30"
     timezone: str = "Asia/Kolkata"
 
     # ── Video ────────────────────────────────────────────────
@@ -93,6 +95,13 @@ class Settings(BaseSettings):
 
     # ── Brand ────────────────────────────────────────────────
     channel_name: str = "MindGlitched AI"
+    channel_handle: str = "@MindGlitchedAI"
+    channel_description: str = (
+        "Your brain is lying to you. Daily.\n\n"
+        "MindGlitched AI drops one mind-bending psychology fact every day — "
+        "the kind that changes how you see people, decisions, and yourself.\n\n"
+        "New Short every day at 6:30 PM. Subscribe before your brain talks you out of it."
+    )
     brand_color: str = "#6C63FF"
     caption_font: str = "Montserrat-Bold"
     caption_size: int = 52
