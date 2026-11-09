@@ -81,8 +81,8 @@ class Settings(BaseSettings):
     video_width: int = 1080
     video_height: int = 1920
     video_fps: int = 30
-    video_min_duration: int = 15
-    video_max_duration: int = 30
+    video_min_duration: int = 25
+    video_max_duration: int = 40
     video_bitrate: str = "4000k"
     audio_bitrate: str = "192k"
 

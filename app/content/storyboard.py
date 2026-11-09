@@ -176,13 +176,13 @@ async def _gemini_storyboard(script: Script) -> list[Scene] | None:
     if not settings.gemini_api_key:
         return None
 
-    import google.generativeai as genai
+    try:
+        from google import genai
+    except ImportError:
+        return None
 
-    genai.configure(api_key=settings.gemini_api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
-
-    total_duration = script.estimated_duration or 20.0
-    target_scenes = max(4, min(6, int(total_duration / 4)))
+    total_duration = script.estimated_duration or 35.0
+    target_scenes = max(6, min(8, int(total_duration / 5)))
 
     prompt = f"""You are a cinematic storyboard director for a short-form vertical video (9:16, {total_duration:.0f} seconds).
 
@@ -190,6 +190,7 @@ Script:
 {script.script}
 
 Create a {target_scenes}-scene storyboard. Each scene should have DIFFERENT visuals — no repetition.
+Each scene covers roughly {total_duration/target_scenes:.1f} seconds of narration.
 
 For each scene provide:
 - narration_segment: exact words from the script for this scene
@@ -202,7 +203,7 @@ For each scene provide:
 - mood: emotional quality of the shot
 - transition: (hard cut / cross-dissolve / fade)
 
-Respond ONLY as a JSON array:
+Respond ONLY as a JSON array with no markdown:
 [
   {{
     "narration_segment": "...",
@@ -218,14 +219,21 @@ Respond ONLY as a JSON array:
 ]"""
 
     try:
-        response = model.generate_content(prompt)
-        text = response.text
-        json_match = re.search(r'\[.*\]', text, re.DOTALL)
+        client = genai.Client(api_key=settings.gemini_api_key)
+        response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt,
+        )
+        raw = response.text.strip()
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
+        raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
+
+        json_match = re.search(r'\[.*\]', raw, re.DOTALL)
         if not json_match:
             return None
         scenes_data = json.loads(json_match.group())
 
-        total_time = script.estimated_duration or 20.0
+        total_time = script.estimated_duration or 35.0
         time_per_scene = total_time / len(scenes_data)
 
         scenes = []
@@ -246,8 +254,8 @@ Respond ONLY as a JSON array:
                     subject=sd.get("subject", "abstract"),
                     transition=sd.get("transition", "hard cut"),
                     search_keywords=sd.get("search_keywords", []),
-                    asset_source="pexels",
-                    asset_licence="Pexels License (free for commercial use)",
+                    asset_source="pixabay",
+                    asset_licence="Pixabay License (free for commercial use)",
                 )
             )
         return scenes
@@ -260,8 +268,8 @@ Respond ONLY as a JSON array:
 def _heuristic_storyboard(script: Script) -> list[Scene]:
     """Generate storyboard from script without AI."""
     sentences = _split_into_sentences(script.script)
-    total_duration = script.estimated_duration or 20.0
-    target_scenes = max(4, min(6, len(sentences)))
+    total_duration = script.estimated_duration or 35.0
+    target_scenes = max(6, min(8, len(sentences)))
 
     groups = _group_sentences_into_scenes(sentences, target_scenes)
     time_per_scene = total_duration / len(groups)

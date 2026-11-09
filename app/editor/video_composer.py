@@ -45,23 +45,24 @@ async def _build_scene_clip(
     Convert a single asset (image or video) into a correctly-sized clip
     with cinematic motion applied.
     """
-    duration = scene.duration
+    duration = max(scene.duration, 1.0)   # guard against sub-second leftovers
     movement = scene.movement
+    n_frames = max(int(duration * FPS), FPS)  # at least 1 second of frames
 
     # Motion filter based on camera movement type
     motion_map = {
-        "slow push-in": f"zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={int(duration * FPS)}:s={W}x{H}:fps={FPS}",
-        "gentle dolly forward": f"zoompan=z='min(zoom+0.001,1.3)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={int(duration * FPS)}:s={W}x{H}:fps={FPS}",
-        "subtle zoom out": f"zoompan=z='max(zoom-0.001,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={int(duration * FPS)}:s={W}x{H}:fps={FPS}",
-        "parallax drift": f"zoompan=z='1.1':x='if(gte(zoom,1.0),x+0.5,0)':y='ih/2-(ih/zoom/2)':d={int(duration * FPS)}:s={W}x{H}:fps={FPS}",
-        "slow pan left": f"zoompan=z='1.1':x='iw/2-(iw/zoom/2)+t*8':y='ih/2-(ih/zoom/2)':d={int(duration * FPS)}:s={W}x{H}:fps={FPS}",
-        "slow pan right": f"zoompan=z='1.1':x='iw/2-(iw/zoom/2)-t*8':y='ih/2-(ih/zoom/2)':d={int(duration * FPS)}:s={W}x{H}:fps={FPS}",
+        "slow push-in": f"zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={n_frames}:s={W}x{H}:fps={FPS}",
+        "gentle dolly forward": f"zoompan=z='min(zoom+0.001,1.3)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={n_frames}:s={W}x{H}:fps={FPS}",
+        "subtle zoom out": f"zoompan=z='max(zoom-0.001,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={n_frames}:s={W}x{H}:fps={FPS}",
+        "parallax drift": f"zoompan=z='1.1':x='if(gte(zoom,1.0),x+0.5,0)':y='ih/2-(ih/zoom/2)':d={n_frames}:s={W}x{H}:fps={FPS}",
+        "slow pan left": f"zoompan=z='1.1':x='iw/2-(iw/zoom/2)+t*8':y='ih/2-(ih/zoom/2)':d={n_frames}:s={W}x{H}:fps={FPS}",
+        "slow pan right": f"zoompan=z='1.1':x='iw/2-(iw/zoom/2)-t*8':y='ih/2-(ih/zoom/2)':d={n_frames}:s={W}x{H}:fps={FPS}",
     }
 
     if scene.asset_type == "image":
         motion = motion_map.get(
             movement,
-            f"zoompan=z='min(zoom+0.001,1.3)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={int(duration * FPS)}:s={W}x{H}:fps={FPS}",
+            f"zoompan=z='min(zoom+0.001,1.3)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={n_frames}:s={W}x{H}:fps={FPS}",
         )
         # Scale and pad image to 9:16 with cinematic zoom
         vf = (
@@ -242,16 +243,146 @@ async def _add_audio_to_video(
     return output_path.exists()
 
 
-async def _burn_subtitles(
+def _srt_to_seconds(ts: str) -> float:
+    """Convert SRT timestamp (HH:MM:SS,mmm) to float seconds."""
+    ts = ts.replace(",", ".")
+    h, m, rest = ts.split(":")
+    return int(h) * 3600 + int(m) * 60 + float(rest)
+
+
+def _parse_srt(srt_path: Path) -> list[dict]:
+    """Parse an SRT file into a list of {start, end, text} dicts."""
+    segments: list[dict] = []
+    text = srt_path.read_text(encoding="utf-8", errors="replace")
+    blocks = [b.strip() for b in text.strip().split("\n\n") if b.strip()]
+    for block in blocks:
+        lines = block.splitlines()
+        if len(lines) < 3:
+            continue
+        # Line 0: index, Line 1: timestamps, Line 2+: text
+        try:
+            start_ts, end_ts = lines[1].split(" --> ")
+            start = _srt_to_seconds(start_ts.strip())
+            end = _srt_to_seconds(end_ts.strip())
+            caption = " ".join(lines[2:]).replace("'", "\\'").replace(":", "\\:")
+            # Wrap long captions
+            words = caption.split()
+            if len(words) > 6:
+                mid = len(words) // 2
+                caption = " ".join(words[:mid]) + "\\n" + " ".join(words[mid:])
+            segments.append({"start": start, "end": end, "text": caption})
+        except Exception:
+            continue
+    return segments
+
+
+async def _burn_subtitles_pillow(
     video_path: Path,
-    ass_path: Path,
+    srt_path: Path,
     output_path: Path,
 ) -> bool:
-    """Burn ASS subtitles into video."""
+    """Burn captions using Pillow PNG overlays + FFmpeg overlay filter.
+
+    Works on ANY FFmpeg build — no libass, no libfreetype needed.
+    For each SRT segment:
+      1. Render white text with black stroke on transparent PNG (Pillow)
+      2. Use FFmpeg overlay filter to composite PNG onto video at [start,end]
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    segments = _parse_srt(srt_path)
+    if not segments:
+        logger.warning("No subtitle segments — shipping without captions")
+        shutil.copy2(video_path, output_path)
+        return False
+
+    png_dir = output_path.parent / "caption_pngs"
+    png_dir.mkdir(exist_ok=True)
+
+    # Try to load a system font; fall back to PIL default
+    font_size = 56
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont
+    for font_path in [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ]:
+        try:
+            font = ImageFont.truetype(font_path, font_size)
+            break
+        except (IOError, OSError):
+            continue
+    else:
+        logger.warning("No TTF font found — using PIL default (smaller)")
+        font = ImageFont.load_default()
+
+    overlay_specs: list[dict] = []
+
+    for idx, seg in enumerate(segments):
+        text = seg["text"].replace("\\n", "\n").replace("\\'", "'").replace("\\:", ":")
+        png_path = png_dir / f"cap_{idx:03d}.png"
+
+        # Measure text size
+        dummy = Image.new("RGBA", (1, 1))
+        draw = ImageDraw.Draw(dummy)
+        bbox = draw.textbbox((0, 0), text, font=font, align="center")
+        tw = bbox[2] - bbox[0] + 40   # padding
+        th = bbox[3] - bbox[1] + 24
+
+        # Create transparent canvas matching video width, tall enough for text
+        img = Image.new("RGBA", (W, th + 20), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        tx = (W - tw) // 2 + 20
+        ty = 10
+
+        # Draw black stroke (8-direction outline)
+        stroke = 4
+        for dx in range(-stroke, stroke + 1):
+            for dy in range(-stroke, stroke + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                draw.text((tx + dx, ty + dy), text, font=font,
+                          fill=(0, 0, 0, 230), align="center")
+        # Draw white text
+        draw.text((tx, ty), text, font=font, fill=(255, 255, 255, 255), align="center")
+
+        img.save(str(png_path), "PNG")
+        overlay_specs.append({
+            "png": png_path,
+            "start": seg["start"],
+            "end": seg["end"],
+            "y": int(H * 0.82),   # lower third
+        })
+
+    # Build FFmpeg filter_complex with one overlay per segment
+    # Input 0 = video, Inputs 1..N = caption PNGs
+    inputs: list[str] = ["-i", str(video_path)]
+    for spec in overlay_specs:
+        inputs += ["-i", str(spec["png"])]
+
+    # Chain overlays: [v0][1]overlay → [v1], [v1][2]overlay → [v2], ...
+    filter_parts: list[str] = []
+    n = len(overlay_specs)
+    for i, spec in enumerate(overlay_specs):
+        in_label = f"[v{i}]" if i > 0 else "[0:v]"
+        out_label = f"[v{i+1}]"
+        x = f"(W-w)/2"
+        y = spec["y"]
+        t0, t1 = spec["start"], spec["end"]
+        filter_parts.append(
+            f"{in_label}[{i+1}:v]overlay={x}:{y}:enable='between(t,{t0:.3f},{t1:.3f})'{out_label}"
+        )
+
+    filter_complex = ";".join(filter_parts)
+    final_label = f"[v{n}]"
+
     cmd = [
         "ffmpeg", "-y",
-        "-i", str(video_path),
-        "-vf", f"ass={ass_path.absolute()}",
+        *inputs,
+        "-filter_complex", filter_complex,
+        "-map", final_label,
+        "-map", "0:a",
         "-c:v", "libx264",
         "-preset", "fast",
         "-crf", "18",
@@ -260,6 +391,7 @@ async def _burn_subtitles(
         "-pix_fmt", "yuv420p",
         str(output_path),
     ]
+
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
@@ -267,12 +399,57 @@ async def _burn_subtitles(
     )
     _, stderr = await proc.communicate()
 
+    # Cleanup PNGs
+    shutil.rmtree(png_dir, ignore_errors=True)
+
     if proc.returncode != 0:
-        logger.error("Subtitle burn-in failed: %s", stderr.decode()[-500:])
-        # Return video without subtitles as fallback
+        logger.error("Pillow subtitle overlay failed: %s", stderr.decode()[-800:])
         shutil.copy2(video_path, output_path)
         return False
+
+    logger.info("✅ Captions burned via Pillow overlay (%d segments)", len(segments))
     return output_path.exists()
+
+
+async def _burn_subtitles(
+    video_path: Path,
+    ass_path: Path,
+    output_path: Path,
+    srt_path: Path | None = None,
+) -> bool:
+    """Burn subtitles — tries ASS first, falls back to SRT drawtext."""
+    # Try ASS (requires libass in FFmpeg build)
+    safe_ass = output_path.parent / "subs.ass"
+    shutil.copy2(ass_path, safe_ass)
+    safe_path_str = str(safe_ass.absolute()).replace("\\", "/").replace(":", "\\:")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-vf", f"ass={safe_path_str}",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        "-c:a", "copy", "-b:v", settings.video_bitrate, "-pix_fmt", "yuv420p",
+        str(output_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+
+    if proc.returncode == 0 and output_path.exists():
+        logger.info("✅ Subtitles burned via ass= filter")
+        return True
+
+    logger.warning("ass= filter unavailable (libass not compiled in) — trying drawtext fallback")
+
+    # Fallback: drawtext from SRT
+    if srt_path and srt_path.exists():
+        return await _burn_subtitles_pillow(video_path, srt_path, output_path)
+
+    # Last resort: video without captions
+    logger.warning("No SRT fallback available — shipping video without captions")
+    shutil.copy2(video_path, output_path)
+    return False
 
 
 async def _add_loudness_normalization(
@@ -309,6 +486,7 @@ async def compose_video(
     output_path: Path,
     music_path: Path | None = None,
     temp_dir: Path | None = None,
+    srt_subtitle_path: Path | None = None,
 ) -> bool:
     """
     Full video composition pipeline.
@@ -382,10 +560,16 @@ async def compose_video(
         if not await _add_audio_to_video(concat_out, narration_path, audio_out, music_path):
             return False
 
-        # Step 4: Burn subtitles
+        # Step 4: Burn subtitles (ASS with libass fallback → SRT drawtext → no captions)
         sub_out = temp_dir / "with_subtitles.mp4"
         if ass_subtitle_path.exists():
-            await _burn_subtitles(audio_out, ass_subtitle_path, sub_out)
+            await _burn_subtitles(
+                audio_out, ass_subtitle_path, sub_out,
+                srt_path=srt_subtitle_path,
+            )
+            source_for_norm = sub_out if sub_out.exists() else audio_out
+        elif srt_subtitle_path and srt_subtitle_path.exists():
+            await _burn_subtitles_pillow(audio_out, srt_subtitle_path, sub_out)
             source_for_norm = sub_out if sub_out.exists() else audio_out
         else:
             source_for_norm = audio_out
