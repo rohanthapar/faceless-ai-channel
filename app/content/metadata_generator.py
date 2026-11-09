@@ -20,7 +20,7 @@ CHANNEL_FOOTER = (
     "New Short every day at 6:30 PM IST.\n"
     f"{settings.youtube_channel_url}\n"
     "──────────────────────\n"
-    "#Shorts #Psychology #MindGlitchedAI #Facts #BrainFacts #LearnOnYouTube"
+    "#Shorts #MindGlitchedAI #Facts #DidYouKnow #LearnOnYouTube"
 )
 
 
@@ -42,9 +42,9 @@ def _fallback_description(topic: Topic, script: Script) -> str:
 
 def _fallback_tags(topic: Topic) -> list[str]:
     base_tags = [
-        "shorts", "youtubeshorts", "facts", "psychology", "mindblown",
-        "learnontiktok", "didyouknow", topic.pillar.value,
-        "education", "science", "brainfacts", "mindglitchedai",
+        "shorts", "youtubeshorts", "facts", "mindblown",
+        "didyouknow", topic.pillar.value,
+        "education", "mindglitchedai",
     ]
     title_words = [w.lower() for w in topic.title.split() if len(w) > 4]
     return base_tags + title_words[:8]
@@ -84,8 +84,8 @@ Full script: {script.script[:500]}
 Generate:
 1. youtube_title — max 70 chars, curiosity-triggering, accurate. No "SHOCKING"/"INSANE" clickbait.
 2. youtube_description — 80-200 words. First 2 lines must hook the reader (shown before "more").
-   End with these exact hashtags: #Shorts #Psychology #MindGlitchedAI
-3. youtube_tags — 12-15 specific tags relevant to the content. Include "shorts", "psychology", "mindglitchedai".
+   End with these exact hashtags: #Shorts #{topic.pillar.value.capitalize()} #MindGlitchedAI
+3. youtube_tags — 12-15 specific tags relevant to the content. Include "shorts", "facts", "mindglitchedai".
 4. youtube_category_id — use "27" (Education)
 5. instagram_caption — max 300 chars, punchy, ends with 3 hashtags
 
@@ -136,9 +136,9 @@ Respond ONLY as JSON with no markdown:
 
         # Build Instagram hashtags from pillar + standard set
         ig_hashtags = [
-            "#Shorts", "#Psychology", "#MindGlitchedAI", "#BrainFacts",
+            "#Shorts", "#MindGlitchedAI", "#DidYouKnow",
             "#Facts", "#LearnOnYouTube", "#Science", "#Education",
-            f"#{topic.pillar.value.capitalize()}", "#Mindset", "#CognitiveBias",
+            f"#{topic.pillar.value.capitalize()}",
         ]
 
         return VideoMetadata(
@@ -147,7 +147,7 @@ Respond ONLY as JSON with no markdown:
             youtube_description=yt_desc,
             youtube_tags=data.get("youtube_tags", _fallback_tags(topic))[:15],
             youtube_category_id=data.get("youtube_category_id", "27"),
-            instagram_caption=data.get("instagram_caption", f"{script.hook}\n\n#Shorts #Psychology #MindGlitchedAI"),
+            instagram_caption=data.get("instagram_caption", f"{script.hook}\n\n#Shorts #Facts #MindGlitchedAI"),
             instagram_hashtags=ig_hashtags,
         )
 
@@ -163,9 +163,9 @@ def _fallback_metadata(video: Video, topic: Topic, script: Script) -> VideoMetad
         youtube_description=_fallback_description(topic, script),
         youtube_tags=_fallback_tags(topic),
         youtube_category_id="27",
-        instagram_caption=f"{script.hook}\n\n#Shorts #Psychology #MindGlitchedAI",
+        instagram_caption=f"{script.hook}\n\n#Shorts #Facts #MindGlitchedAI",
         instagram_hashtags=[
-            "#Shorts", "#Psychology", "#MindGlitchedAI", "#BrainFacts",
+            "#Shorts", "#MindGlitchedAI", "#DidYouKnow",
             "#Facts", "#LearnOnYouTube", f"#{topic.pillar.value.capitalize()}",
         ],
     )

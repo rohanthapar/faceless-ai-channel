@@ -178,6 +178,58 @@ async def _search_pixabay_images(
         return []
 
 
+async def _search_pixabay_videos(
+    query: str,
+    client: httpx.AsyncClient,
+    per_page: int = 5,
+) -> list[StockAsset]:
+    """Search Pixabay for video clips (stands in for Pexels, which has no key)."""
+    if not settings.pixabay_api_key:
+        return []
+
+    try:
+        resp = await client.get(
+            "https://pixabay.com/api/videos/",
+            params={
+                "key": settings.pixabay_api_key,
+                "q": query,
+                "per_page": max(per_page, 3),  # Pixabay minimum is 3
+                "video_type": "film",
+                "safesearch": "true",
+            },
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        assets = []
+        for hit in data.get("hits", []):
+            # Prefer ~1080p ("medium"/"large"); "large" can be 4K and slow to download
+            videos = hit.get("videos", {})
+            file = next((videos[k] for k in ("medium", "large", "small") if videos.get(k, {}).get("url")), None)
+            if not file:
+                continue
+            assets.append(
+                StockAsset(
+                    url=file["url"],
+                    preview_url=file.get("thumbnail", ""),
+                    source="pixabay",
+                    asset_type="video",
+                    width=file.get("width", 0),
+                    height=file.get("height", 0),
+                    creator=hit.get("user", "Unknown"),
+                    creator_url=f"https://pixabay.com/users/{hit.get('user', '')}",
+                    licence="Pixabay License — Free for commercial use, no attribution required",
+                    source_page_url=hit.get("pageURL", ""),
+                )
+            )
+        return assets
+
+    except Exception as exc:
+        logger.warning("Pixabay video search failed for '%s': %s", query, exc)
+        return []
+
+
 async def _download_asset(
     asset: StockAsset,
     client: httpx.AsyncClient,
@@ -218,7 +270,7 @@ async def fetch_assets_for_scene(
     """
     Fetch stock assets for a storyboard scene.
     Returns a list of downloaded assets sorted by relevance.
-    Priority: Pexels video → Pexels image → Pixabay image.
+    Priority: Pexels video → Pixabay video → Pexels image → Pixabay image.
     """
     keywords = scene.get("search_keywords", [])
     subject = scene.get("subject", "")
@@ -232,16 +284,22 @@ async def fetch_assets_for_scene(
     ) as client:
         # Try video first (more dynamic), then images
         video_assets = await _search_pexels_videos(query, client, per_page=3)
+        video_assets_pixabay = await _search_pixabay_videos(query, client, per_page=3)
         image_assets_pexels = await _search_pexels_images(query, client, per_page=3)
         image_assets_pixabay = await _search_pixabay_images(query, client, per_page=3)
 
-        all_assets = video_assets + image_assets_pexels + image_assets_pixabay
+        all_assets = video_assets + video_assets_pixabay + image_assets_pexels + image_assets_pixabay
 
-        if not all_assets:
-            logger.warning("No assets found for query '%s' — trying generic fallback", query)
-            fallback_query = subject or "abstract background"
-            image_assets_pexels = await _search_pexels_images(fallback_query, client, per_page=3)
-            all_assets = image_assets_pexels
+        # Long multi-keyword queries often match nothing; retry with simpler ones
+        for fallback_query in [*keywords[:3], subject, "abstract background"]:
+            if all_assets or not fallback_query:
+                continue
+            logger.warning("No assets found for query '%s' — trying '%s'", query, fallback_query)
+            all_assets = (
+                await _search_pixabay_videos(fallback_query, client, per_page=3)
+                + await _search_pixabay_images(fallback_query, client, per_page=3)
+                + await _search_pexels_images(fallback_query, client, per_page=3)
+            )
 
         if not all_assets:
             logger.error("No assets available for scene %d", scene.get("scene_number", 0))

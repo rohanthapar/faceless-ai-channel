@@ -97,9 +97,9 @@ class Settings(BaseSettings):
     channel_name: str = "MindGlitched AI"
     channel_handle: str = "@MindGlitchedAI"
     channel_description: str = (
-        "Your brain is lying to you. Daily.\n\n"
-        "MindGlitched AI drops one mind-bending psychology fact every day — "
-        "the kind that changes how you see people, decisions, and yourself.\n\n"
+        "Facts that glitch your brain. Daily.\n\n"
+        "MindGlitched AI drops one mind-bending fact every day — science, history, "
+        "space, tech, nature and the human mind.\n\n"
         "New Short every day at 6:30 PM. Subscribe before your brain talks you out of it."
     )
     brand_color: str = "#6C63FF"
