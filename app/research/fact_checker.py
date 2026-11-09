@@ -49,7 +49,7 @@ async def _gemini_fact_check(
     import google.generativeai as genai
 
     genai.configure(api_key=settings.gemini_api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-3.8-flash")
 
     prompt = f"""You are a fact-checking assistant for a short-form educational video channel.
 
