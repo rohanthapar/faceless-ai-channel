@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import tempfile
 from pathlib import Path
 
@@ -112,25 +113,18 @@ async def _convert_wav_to_mp3(wav_path: Path, mp3_path: Path) -> None:
     await proc.wait()
 
 
-async def _create_silent_placeholder(duration: float, output_path: Path) -> bool:
-    """Create a silent audio track as last-resort fallback."""
-    logger.error("All TTS providers failed — creating silent placeholder")
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi",
-        "-i", f"anullsrc=r=44100:cl=mono",
-        "-t", str(duration),
-        "-c:a", "libmp3lame",
-        "-b:a", "128k",
-        str(output_path),
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    await proc.wait()
-    return output_path.exists()
+def _clean_for_tts(text: str) -> str:
+    """Normalise punctuation that makes Edge TTS intermittently return no audio.
+
+    Trailing commas/ellipses/dashes (common in loop-back endings) are the usual
+    trigger, so the text always ends on a full stop.
+    """
+    text = text.replace("…", "...")
+    text = re.sub(r"\s*[—–]\s*", ", ", text)
+    text = re.sub(r"\.{2,}", ",", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"[\s,;:]+$", "", text)
+    return text if text.endswith((".", "!", "?")) else text + "."
 
 
 async def generate_narration(
@@ -144,6 +138,7 @@ async def generate_narration(
     Returns True if audio was successfully generated, False otherwise.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    text = _clean_for_tts(text)
 
     # Check cache
     if use_cache:
@@ -164,9 +159,9 @@ async def generate_narration(
         success = await _piper_tts_generate(text, settings.piper_model_path, output_path)
 
     if not success:
-        # Last resort
-        success = await _create_silent_placeholder(30.0, output_path)
-        logger.error("Using silent placeholder — TTS providers unavailable")
+        # No silent placeholder: a voiceless Short must never be published.
+        # Returning False fails the pipeline stage so the run can be retried.
+        logger.error("All TTS providers failed — no narration generated")
 
     # Update cache
     if success and use_cache and output_path.exists():
