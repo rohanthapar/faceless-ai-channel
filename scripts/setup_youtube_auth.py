@@ -1,53 +1,64 @@
 #!/usr/bin/env python3
 """
-scripts/setup_youtube_auth.py
-Run once to complete the YouTube OAuth flow and save a token file.
+scripts/setup_youtube_auth.py — One-time YouTube OAuth2 setup.
+
+Run this ONCE to authorize the app to upload to your YouTube channel.
+A browser window will open — sign in and approve. The token is saved to
+credentials/youtube_token.json and reused automatically forever.
 
 Usage:
     python scripts/setup_youtube_auth.py
 """
-from __future__ import annotations
-
-import os
+import asyncio
 import sys
 from pathlib import Path
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.config import settings
 
-try:
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from google.oauth2.credentials import Credentials
-    import pickle
-except ImportError:
-    print("❌ Missing dependencies. Run: pip install google-auth-oauthlib google-auth")
-    sys.exit(1)
+async def main():
+    from rich.console import Console
+    from rich.panel import Panel
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+    console = Console()
+    console.print(Panel(
+        "[bold yellow]YouTube OAuth Setup[/bold yellow]\n\n"
+        "This will open a browser window to authorize the app.\n"
+        "Sign in with the Google account that owns your YouTube channel.\n\n"
+        "[dim]Token saved to: credentials/youtube_token.json[/dim]",
+        border_style="yellow",
+    ))
 
+    from app.config import settings
+    if not settings.youtube_client_secret_file.exists():
+        console.print(f"\n[red]❌ Missing:[/red] {settings.youtube_client_secret_file}\n")
+        console.print("[bold]Steps to get client_secret.json:[/bold]")
+        console.print("  1. Go to [link]https://console.cloud.google.com[/link]")
+        console.print("  2. Create a project (or select existing)")
+        console.print("  3. Enable [bold]YouTube Data API v3[/bold]")
+        console.print("     APIs & Services → Enable APIs → search 'YouTube Data API v3'")
+        console.print("  4. Create OAuth credentials:")
+        console.print("     APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID")
+        console.print("     Application type: [bold]Desktop app[/bold]")
+        console.print("     Download JSON → rename to [bold]youtube_client_secret.json[/bold]")
+        console.print(f"  5. Place it at: [bold]{settings.youtube_client_secret_file}[/bold]\n")
+        console.print("Then re-run this script.")
+        return False
 
-def main():
-    secret_file = settings.youtube_client_secret_file
-    token_file = settings.youtube_token_file
+    console.print("\n[dim]Opening browser for authorization...[/dim]\n")
 
-    if not secret_file.exists():
-        print(f"❌ Client secret not found: {secret_file}")
-        print("   Download it from Google Cloud Console → APIs & Services → Credentials")
-        sys.exit(1)
+    from app.publishing.youtube import run_oauth_flow
+    ok = await run_oauth_flow()
 
-    token_file.parent.mkdir(parents=True, exist_ok=True)
+    if ok:
+        console.print("\n[bold green]✅ YouTube authorization complete![/bold green]")
+        console.print(f"Token saved to: {settings.youtube_token_file}")
+        console.print("\nNext: set [bold]YOUTUBE_PRODUCTION_MODE=true[/bold] in .env to enable uploads.")
+    else:
+        console.print("\n[red]❌ Authorization failed — check the error above.[/red]")
 
-    flow = InstalledAppFlow.from_client_secrets_file(str(secret_file), SCOPES)
-    creds = flow.run_local_server(port=0)
-
-    with open(token_file, "wb") as f:
-        pickle.dump(creds, f)
-
-    print(f"✅ Token saved to {token_file}")
-    print("   YouTube OAuth setup complete!")
+    return ok
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

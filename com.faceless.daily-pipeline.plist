@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <!-- Unique label — must match filename -->
+  <key>Label</key>
+  <string>com.faceless.daily-pipeline</string>
+
+  <!-- Command to run -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/bawa/Desktop/Projects/faceless-ai-channel/.venv/bin/python</string>
+    <string>/Users/bawa/Desktop/Projects/faceless-ai-channel/scripts/run_daily.py</string>
+  </array>
+
+  <!-- Working directory -->
+  <key>WorkingDirectory</key>
+  <string>/Users/bawa/Desktop/Projects/faceless-ai-channel</string>
+
+  <!-- Run every day at 09:00 AM -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <!-- Log stdout/stderr -->
+  <key>StandardOutPath</key>
+  <string>/Users/bawa/Desktop/Projects/faceless-ai-channel/logs/launchd_stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/bawa/Desktop/Projects/faceless-ai-channel/logs/launchd_stderr.log</string>
+
+  <!-- Restart on crash -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <!-- Run even if Mac was asleep at trigger time -->
+  <key>RunAtLoad</key>
+  <false/>
+
+</dict>
+</plist>
