@@ -19,13 +19,13 @@
   <key>WorkingDirectory</key>
   <string>/Users/bawa/Desktop/Projects/faceless-ai-channel</string>
 
-  <!-- Run every day at 09:00 AM -->
+  <!-- Run every day at 06:30 PM IST -->
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
-    <integer>9</integer>
+    <integer>18</integer>
     <key>Minute</key>
-    <integer>0</integer>
+    <integer>30</integer>
   </dict>
 
   <!-- Log stdout/stderr -->
