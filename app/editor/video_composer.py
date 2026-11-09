@@ -197,7 +197,8 @@ async def _add_audio_to_video(
         audio_filter = (
             f"[1:a]volume=1.0[narr];"
             f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[music];"
-            f"[narr][music]amix=inputs=2:duration=first[aout]"
+            # normalize=0: amix otherwise halves the narration when music is present
+            f"[narr][music]amix=inputs=2:duration=first:normalize=0[aout]"
         )
         cmd = [
             "ffmpeg", "-y",

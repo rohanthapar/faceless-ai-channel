@@ -59,7 +59,7 @@ PILLAR_GUIDANCE = {
 
 
 def _words_per_minute() -> float:
-    return 135.0  # measured TTS pace: 100 words ≈ 44s
+    return 148.0  # measured TTS pace at +10% rate (135 wpm at +0%)
 
 
 def _estimate_duration(text: str) -> float:
@@ -95,7 +95,7 @@ Content pillar: {topic.pillar.value}
 Pillar guidance: {guidance}
 
 Requirements:
-- Write for a 20-30 second video at natural narration pace (~135 words/minute)
+- Write for a 20-30 second video at narration pace (~148 words/minute)
 - Target 55-70 spoken words total — never more than 70
 - Structure: Hook → 2-3 punchy beats that escalate → twist/payoff line
 - The FIRST sentence is the spoken hook: max 12 words, states the most surprising

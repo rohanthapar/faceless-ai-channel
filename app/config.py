@@ -92,7 +92,7 @@ class Settings(BaseSettings):
 
     # ── TTS ──────────────────────────────────────────────────
     tts_primary_provider: Literal["piper", "edge", "none"] = "edge"
-    edge_tts_voice: str = "en-US-AriaNeural"
+    edge_tts_voice: str = "en-US-AndrewMultilingualNeural"
     edge_tts_rate: str = "+0%"  # e.g. "+12%" for a punchier Shorts pace
 
     # ── AI content review (blocks upload below these 1-10 scores) ──
