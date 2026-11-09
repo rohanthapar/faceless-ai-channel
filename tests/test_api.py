@@ -1,16 +1,22 @@
 """
 tests/test_api.py — FastAPI endpoint integration tests.
+Scheduler and pipeline are mocked so tests run without heavy optional deps.
 """
 from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base, get_db
-from app.main import app
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+
+# Patch start_scheduler so APScheduler doesn't actually start during lifespan
+_scheduler_patch = patch("app.scheduler.job_manager.start_scheduler", return_value=None)
+_scheduler_stop_patch = patch("app.scheduler.job_manager.stop_scheduler", return_value=None)
 
 
 @pytest.fixture(scope="module")
@@ -25,12 +31,18 @@ async def test_app():
         async with Session() as session:
             yield session
 
-    app.dependency_overrides[get_db] = override_get_db
+    with _scheduler_patch, _scheduler_stop_patch:
+        # Import app AFTER patches are applied
+        from app.main import app
+        app.dependency_overrides[get_db] = override_get_db
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        yield client
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            yield client
 
-    app.dependency_overrides.clear()
+        app.dependency_overrides.clear()
+
     await engine.dispose()
 
 
@@ -61,3 +73,32 @@ async def test_analytics_summary_empty(test_app):
     assert resp.status_code == 200
     data = resp.json()
     assert "total_views" in data
+    assert data["total_views"] == 0
+
+
+@pytest.mark.asyncio
+async def test_topic_not_found(test_app):
+    resp = await test_app.get("/api/topics/9999")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_video_not_found(test_app):
+    resp = await test_app.get("/api/videos/9999")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_pipeline_trigger(test_app):
+    with patch("app.api.pipeline.run_pipeline_once"):
+        resp = await test_app.post("/api/pipeline/run")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "job_id" in data
+    assert data["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_status_not_found(test_app):
+    resp = await test_app.get("/api/pipeline/status/nonexistent-job-id")
+    assert resp.status_code == 404

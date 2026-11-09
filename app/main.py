@@ -29,16 +29,14 @@ async def lifespan(app: FastAPI):
     logger.info("✅ Database initialised")
 
     # Start scheduler
-    from app.scheduler.daily_pipeline import scheduler
-    if not scheduler.running:
-        scheduler.start()
-        logger.info("⏰ Scheduler started (daily at %s %s)", settings.daily_pipeline_time, settings.timezone)
+    from app.scheduler.job_manager import start_scheduler, stop_scheduler
+    start_scheduler()
+    logger.info("⏰ Scheduler started (daily at %s %s)", settings.daily_pipeline_time, settings.timezone)
 
     yield
 
     # Graceful shutdown
-    if scheduler.running:
-        scheduler.shutdown(wait=False)
+    stop_scheduler()
     logger.info("👋 Shutdown complete")
 
 
