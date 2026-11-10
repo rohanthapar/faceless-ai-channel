@@ -13,6 +13,7 @@ Interrupted jobs can be resumed from their last completed stage.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,17 +90,28 @@ class PipelineError(Exception):
     pass
 
 
+class ReviewFailed(PipelineError):
+    """The AI content review scored the video below the publishing bar."""
+
+    def __init__(self, review):
+        self.review = review
+        super().__init__(f"Content review failed {review.scores}: {review.issues}")
+
+
 class DailyPipeline:
     def __init__(self, db: AsyncSession, job: Job):
         self.db = db
         self.job = job
         self.ctx: dict[str, Any] = job.context or {}
+        self.used_asset_urls: set[str] = set()  # clips tried by earlier attempts
 
     async def _save_stage(self, stage: str, **context_updates) -> None:
         """Persist current stage and context to database."""
         self.ctx.update(context_updates)
         self.job.stage = stage
-        self.job.context = self.ctx
+        # Assign a fresh dict: mutating the same JSON object in place isn't detected
+        # by SQLAlchemy, so only the first stage's context was ever persisted
+        self.job.context = dict(self.ctx)
         self.job.status = JobStatus.RUNNING
         await self.db.commit()
 
@@ -190,10 +202,11 @@ class DailyPipeline:
 
         for scene in storyboard.scene_data:
             scene_num = scene["scene_number"]
-            assets = await fetch_assets_for_scene(scene, job_dir)
+            assets = await fetch_assets_for_scene(scene, job_dir, exclude_urls=self.used_asset_urls)
 
             if assets:
                 asset = assets[0]
+                self.used_asset_urls.add(asset.url)
                 # Record in DB
                 db_asset = Asset(
                     storyboard_id=storyboard.id,
@@ -331,7 +344,7 @@ class DailyPipeline:
                 video.quality_status = QualityStatus.FAILED
             await self.db.commit()
             if not review.passed:
-                raise PipelineError(f"Content review failed {review.scores}: {review.issues}")
+                raise ReviewFailed(review)
 
         await self._save_stage("PUBLISH_YOUTUBE")
         logger.info("Quality checks PASSED")
@@ -458,45 +471,90 @@ class DailyPipeline:
                 audio_path = await self.stage_generate_voice(script)
                 actual_duration = self.ctx.get("actual_duration", 20.0)
 
-            # ─ GENERATE_VISUALS ───────────────────────────
-            if self.ctx.get("scene_assets"):
-                scene_assets = self.ctx["scene_assets"]
-                # Convert keys back to int
-                scene_assets = {int(k): v for k, v in scene_assets.items()}
-            else:
-                scene_assets = await self.stage_generate_visuals(storyboard)
+            # ─ VISUALS → EDIT → METADATA → QUALITY_CHECK ──
+            # If the AI review blocks the video, retry with a fresh storyboard and
+            # unused clips (and a new script if accuracy was the problem) instead
+            # of losing the day's video.
+            metadata = None
+            best: tuple[float, Video, Path, VideoMetadata] | None = None
+            max_attempts = max(1, settings.review_max_attempts)
+            for attempt in range(1, max_attempts + 1):
+                if attempt > 1:
+                    logger.info("Review retry %d/%d — new storyboard and clips", attempt, max_attempts)
+                    for key in ("scene_assets", "video_path"):
+                        self.ctx.pop(key, None)
+                    if last_review.scores.get("accuracy", 10) < settings.review_min_accuracy:
+                        script = await self.stage_write_script(topic)
+                        audio_path = await self.stage_generate_voice(script)
+                        actual_duration = self.ctx.get("actual_duration", 20.0)
+                        metadata = None
+                        self.ctx.pop("metadata_id", None)
+                    storyboard = await self.stage_create_storyboard(script)
 
-            # ─ EDIT_VIDEO ─────────────────────────────────
-            if self.ctx.get("video_path"):
-                video_path = Path(self.ctx["video_path"])
-            else:
-                video_path = await self.stage_edit_video(
-                    storyboard, audio_path, actual_duration, scene_assets, script
+                # ─ GENERATE_VISUALS
+                if self.ctx.get("scene_assets"):
+                    scene_assets = {int(k): v for k, v in self.ctx["scene_assets"].items()}
+                else:
+                    scene_assets = await self.stage_generate_visuals(storyboard)
+
+                # ─ EDIT_VIDEO
+                if self.ctx.get("video_path"):
+                    video_path = Path(self.ctx["video_path"])
+                else:
+                    video_path = await self.stage_edit_video(
+                        storyboard, audio_path, actual_duration, scene_assets, script
+                    )
+
+                video = Video(
+                    topic_id=topic.id,
+                    script_id=script.id,
+                    job_id=self.job.job_id,
+                    render_path=str(video_path),
+                    quality_status=QualityStatus.PENDING,
                 )
+                self.db.add(video)
+                await self.db.commit()
+                await self.db.refresh(video)
 
-            # Create Video DB record
-            video = Video(
-                topic_id=topic.id,
-                script_id=script.id,
-                job_id=self.job.job_id,
-                render_path=str(video_path),
-                quality_status=QualityStatus.PENDING,
-            )
-            self.db.add(video)
-            await self.db.commit()
-            await self.db.refresh(video)
+                # ─ GENERATE_METADATA (once per script)
+                if metadata is None and self.ctx.get("metadata_id"):
+                    from sqlalchemy import select as sa_select
+                    metadata = (await self.db.execute(
+                        sa_select(VideoMetadata).where(VideoMetadata.id == self.ctx["metadata_id"])
+                    )).scalar_one_or_none()
+                if metadata is None:
+                    metadata = await self.stage_generate_metadata(video, topic, script)
+                metadata.video_id = video.id
+                await self.db.commit()
 
-            # ─ GENERATE_METADATA ──────────────────────────
-            if self.ctx.get("metadata_id"):
-                from sqlalchemy import select as sa_select
-                metadata = (await self.db.execute(
-                    sa_select(VideoMetadata).where(VideoMetadata.id == self.ctx["metadata_id"])
-                )).scalar_one_or_none()
-            else:
-                metadata = await self.stage_generate_metadata(video, topic, script)
-
-            # ─ QUALITY_CHECK ──────────────────────────────
-            await self.stage_quality_check(video, video_path, script, topic, metadata)
+                # ─ QUALITY_CHECK
+                try:
+                    await self.stage_quality_check(video, video_path, script, topic, metadata)
+                    break
+                except ReviewFailed as exc:
+                    last_review = exc.review
+                    overall = exc.review.scores.get("overall", 0)
+                    if best is None or overall > best[0]:
+                        best = (overall, video, video_path, metadata)
+                    if attempt < max_attempts:
+                        # Keep each attempt's render; the next one overwrites the same path
+                        kept = video_path.with_name(f"{video_path.stem}_try{attempt}{video_path.suffix}")
+                        shutil.copy2(video_path, kept)
+                        if best[1] is video:
+                            best = (overall, video, kept, metadata)
+                        continue
+                    # Out of attempts: with private uploads the owner still approves
+                    # every video, so ship the best attempt rather than nothing.
+                    if settings.youtube_default_privacy != "private":
+                        raise
+                    _, video, video_path, metadata = best
+                    review_warning = (
+                        f"AI review failed after {max_attempts} attempts "
+                        f"(best overall {best[0]:.0f}/10) — uploaded PRIVATE, check before publishing: "
+                        f"{last_review.issues}"
+                    )
+                    logger.warning(review_warning)
+                    self.ctx["review_warning"] = review_warning
 
             # ─ PUBLISH_YOUTUBE ────────────────────────────
             yt_pub = await self.stage_publish_youtube(video, video_path, metadata)
@@ -513,14 +571,13 @@ class DailyPipeline:
             await self.db.commit()
 
             # ─ Move to published directory ──────────────────
-            import shutil
             published_path = settings.output_published / video_path.name
             if video_path.exists():
                 shutil.copy2(video_path, published_path)
                 video.render_path = str(published_path)
                 await self.db.commit()
 
-            await self._finish(success=True)
+            await self._finish(success=True, error=self.ctx.get("review_warning", ""))
             return True
 
         except PipelineError as exc:

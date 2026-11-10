@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     review_enabled: bool = True
     review_min_overall: float = 6.0
     review_min_accuracy: float = 7.0
+    review_max_attempts: int = 3  # re-render with fresh visuals before giving up
     piper_model_path: Path = ROOT_DIR / "assets" / "tts_models" / "en_US-lessac-medium.onnx"
 
     # ── Brand ────────────────────────────────────────────────

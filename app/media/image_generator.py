@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +35,7 @@ class StockAsset:
     licence: str
     source_page_url: str
     local_path: Path | None = None
+    tags: str = ""  # descriptive keywords used to rank relevance
 
 
 async def _search_pexels_videos(
@@ -78,6 +80,7 @@ async def _search_pexels_videos(
                     creator_url=video.get("user", {}).get("url", ""),
                     licence="Pexels License — Free for commercial use, no attribution required",
                     source_page_url=video.get("url", ""),
+                    tags=_slug_words(video.get("url", "")),
                 )
             )
         return assets
@@ -121,6 +124,7 @@ async def _search_pexels_images(
                     creator_url=photo.get("photographer_url", ""),
                     licence="Pexels License — Free for commercial use, no attribution required",
                     source_page_url=photo.get("url", ""),
+                    tags=photo.get("alt", "") or _slug_words(photo.get("url", "")),
                 )
             )
         return assets
@@ -169,6 +173,7 @@ async def _search_pixabay_images(
                     creator_url=f"https://pixabay.com/users/{hit.get('user', '')}",
                     licence="Pixabay License — Free for commercial use, no attribution required",
                     source_page_url=hit.get("pageURL", ""),
+                    tags=hit.get("tags", ""),
                 )
             )
         return assets
@@ -221,6 +226,7 @@ async def _search_pixabay_videos(
                     creator_url=f"https://pixabay.com/users/{hit.get('user', '')}",
                     licence="Pixabay License — Free for commercial use, no attribution required",
                     source_page_url=hit.get("pageURL", ""),
+                    tags=hit.get("tags", ""),
                 )
             )
         return assets
@@ -263,55 +269,130 @@ async def _download_asset(
         return None
 
 
+_STOP_WORDS = {
+    "a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for", "with", "by", "from",
+    "is", "are", "was", "were", "be", "it", "its", "this", "that", "these", "those", "their",
+    "they", "them", "you", "your", "as", "into", "than", "so", "but", "just", "only", "even",
+    "very", "can", "will", "would", "has", "have", "had", "not", "no", "what", "when", "how",
+    "why", "who", "which", "while", "after", "before", "over", "under", "up", "down", "out",
+    "shot", "close", "closeup", "macro", "slow", "motion", "cinematic", "view", "background",
+}
+
+
+def _slug_words(url: str) -> str:
+    """Words from a stock page URL slug, e.g. '/video/man-slicing-broccoli-123/'."""
+    slug = url.rstrip("/").rsplit("/", 1)[-1]
+    return " ".join(w for w in slug.split("-") if not w.isdigit())
+
+
+def _tokens(text: str) -> set[str]:
+    words = re.findall(r"[a-z]+", text.lower())
+    # Crude stemming so "avalanches"/"avalanche" and "hikers"/"hiker" match
+    return {w[:-1] if len(w) > 4 and w.endswith("s") else w for w in words if w not in _STOP_WORDS and len(w) > 2}
+
+
+def _relevance(
+    asset: StockAsset,
+    subject_terms: set[str],
+    key_terms: set[str],
+    context_terms: set[str],
+) -> float:
+    """Score a candidate by how well its tags describe what the scene is about.
+
+    Stock sites list the most representative tags first, so early tags count
+    more, and long tag lists are normalised so keyword-stuffed uploads (35 tags
+    covering everything) don't win on volume alone.
+    """
+    tag_list = [t.strip() for t in asset.tags.split(",") if t.strip()] or [asset.tags]
+    score, seen = 0.0, set()
+    for pos, tag in enumerate(tag_list):
+        position_weight = 1.0 / (1.0 + pos / 4)
+        for tok in _tokens(tag) - seen:
+            seen.add(tok)
+            if tok in subject_terms:
+                score += 3.0 * position_weight
+            elif tok in key_terms:
+                score += 2.0 * position_weight
+            elif tok in context_terms:
+                score += 1.0 * position_weight
+    score /= max(1.0, len(tag_list) / 8) ** 0.5
+    if "generated" in seen:  # "ai generated" stock tends to look fake
+        score -= 1.0
+    if asset.asset_type == "video" and score > 0:
+        score += 0.5  # motion beats stills when equally relevant
+    return score
+
+
 async def fetch_assets_for_scene(
     scene: dict,
     output_dir: Path,
+    exclude_urls: set[str] | None = None,
 ) -> list[StockAsset]:
     """
-    Fetch stock assets for a storyboard scene.
-    Returns a list of downloaded assets sorted by relevance.
-    Priority: Pexels video → Pixabay video → Pexels image → Pixabay image.
-    """
-    keywords = scene.get("search_keywords", [])
-    subject = scene.get("subject", "")
-    query = " ".join(keywords[:3]) or subject or "nature cinematic"
+    Fetch the most relevant stock asset for a storyboard scene.
 
-    logger.info("Fetching assets for scene %d: '%s'", scene.get("scene_number", 0), query)
+    Each search keyword is queried separately (joined multi-phrase queries
+    return junk), all candidates are pooled, and the one whose tags best match
+    the scene's keywords, subject and narration wins. Assets in `exclude_urls`
+    (used by a previous attempt) are skipped.
+    """
+    exclude_urls = exclude_urls or set()
+    keywords = [k for k in scene.get("search_keywords", []) if k][:3]
+    subject = scene.get("subject", "")
+    narration = scene.get("narration_segment", "")
+    # The subject (a concrete noun phrase) is searched too: specific keyword
+    # phrases like "knife cutting canvas tent" often match nothing relevant
+    queries = list(dict.fromkeys([*keywords, subject])) if subject else keywords
+    queries = [q for q in queries if q] or ["nature landscape"]
+
+    subject_terms = _tokens(subject)
+    key_terms = _tokens(" ".join(keywords)) - subject_terms
+    context_terms = _tokens(narration + " " + scene.get("visual_description", "")) - key_terms - subject_terms
+
+    logger.info("Fetching assets for scene %d: %s", scene.get("scene_number", 0), queries)
 
     async with httpx.AsyncClient(
         headers={"User-Agent": "FacelessAI/1.0"},
         follow_redirects=True,
     ) as client:
-        # Try video first (more dynamic), then images
-        video_assets = await _search_pexels_videos(query, client, per_page=3)
-        video_assets_pixabay = await _search_pixabay_videos(query, client, per_page=3)
-        image_assets_pexels = await _search_pexels_images(query, client, per_page=3)
-        image_assets_pixabay = await _search_pixabay_images(query, client, per_page=3)
+        pool: dict[str, StockAsset] = {}
+        for query in queries:
+            for found in (
+                await _search_pexels_videos(query, client, per_page=5),
+                await _search_pixabay_videos(query, client, per_page=8),
+                await _search_pexels_images(query, client, per_page=3),
+                await _search_pixabay_images(query, client, per_page=5),
+            ):
+                for asset in found:
+                    if asset.url and asset.url not in exclude_urls:
+                        pool.setdefault(asset.url, asset)
 
-        all_assets = video_assets + video_assets_pixabay + image_assets_pexels + image_assets_pixabay
+        if not pool:
+            for fallback_query in [subject, *_tokens(" ".join(keywords))]:
+                if not fallback_query or pool:
+                    continue
+                logger.warning("No assets for %s — trying '%s'", queries, fallback_query)
+                for asset in (
+                    await _search_pixabay_videos(fallback_query, client, per_page=8)
+                    + await _search_pixabay_images(fallback_query, client, per_page=5)
+                ):
+                    if asset.url not in exclude_urls:
+                        pool.setdefault(asset.url, asset)
 
-        # Long multi-keyword queries often match nothing; retry with simpler ones
-        for fallback_query in [*keywords[:3], subject, "abstract background"]:
-            if all_assets or not fallback_query:
-                continue
-            logger.warning("No assets found for query '%s' — trying '%s'", query, fallback_query)
-            all_assets = (
-                await _search_pixabay_videos(fallback_query, client, per_page=3)
-                + await _search_pixabay_images(fallback_query, client, per_page=3)
-                + await _search_pexels_images(fallback_query, client, per_page=3)
-            )
-
-        if not all_assets:
+        if not pool:
             logger.error("No assets available for scene %d", scene.get("scene_number", 0))
             return []
 
-        # Download top candidate
-        downloaded = []
-        for asset in all_assets[:2]:  # Download top 2, use first
+        ranked = sorted(pool.values(), key=lambda a: _relevance(a, subject_terms, key_terms, context_terms), reverse=True)
+        best_score = _relevance(ranked[0], subject_terms, key_terms, context_terms)
+        logger.info(
+            "Scene %d best match (score %.1f, %s): %s",
+            scene.get("scene_number", 0), best_score, ranked[0].asset_type, ranked[0].tags[:80],
+        )
+
+        for asset in ranked[:3]:  # fall through to the next best if a download fails
             path = await _download_asset(asset, client, output_dir)
             if path:
                 asset.local_path = path
-                downloaded.append(asset)
-                break  # One is enough per scene
-
-        return downloaded
+                return [asset]
+        return []

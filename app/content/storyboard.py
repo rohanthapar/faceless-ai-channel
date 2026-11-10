@@ -197,11 +197,12 @@ Each scene covers roughly {total_duration/target_scenes:.1f} seconds of narratio
 For each scene provide:
 - narration_segment: exact words from the script for this scene
 - visual_description: specific cinematic shot description (not generic)
-- subject: main visual subject (concrete noun)
-- search_keywords: 3-5 literal stock-photo search terms (2-3 words each) for things a
-  photographer could actually shoot that directly show what the narration says
-  (e.g. "physics laboratory laser", "whirlpool water") — no metaphors, moods,
-  glitch effects or abstract concepts that stock sites won't have
+- subject: the ONE thing on screen, as 1-2 common words a stock library surely has
+  (e.g. "tent", "avalanche", "mantis shrimp", "radar dish") — not an action or a phrase
+- search_keywords: exactly 3 literal stock-footage search terms, ordered specific → generic.
+  The first may be 2-4 words; the LAST must be 1-2 common words (e.g. "tent", "snowy forest").
+  Only things a camera could actually film that directly show what the narration says —
+  no metaphors, moods, glitch effects or abstract concepts that stock sites won't have
 - camera_angle: (close-up / medium / wide / aerial / macro)
 - camera_movement: pick one from [slow push-in, dolly forward, subtle zoom, parallax drift, pan left, pan right, tracking, atmospheric float]
 - lighting: specific lighting description

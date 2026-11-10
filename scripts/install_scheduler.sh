@@ -42,7 +42,7 @@ echo "✅ Launchd job loaded"
 # 5. Show next run
 echo ""
 echo "──────────────────────────────────────────────────"
-echo "✅ Scheduler installed! Pipeline runs daily at 06:30 PM."
+echo "✅ Scheduler installed! Pipeline runs daily at 6:30 PM (auto-retries 8:00 and 9:30 PM)."
 echo ""
 echo "Useful commands:"
 echo "  Run immediately:  launchctl start $LABEL"

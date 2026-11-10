@@ -62,6 +62,27 @@ def _words_per_minute() -> float:
     return 148.0  # measured TTS pace at +10% rate (135 wpm at +0%)
 
 
+def _ensure_complete_ending(text: str) -> str:
+    """Drop a trailing unfinished sentence ("...the panic where...").
+
+    Trailing-off "loop" endings sound like the video was cut off — the AI
+    reviewer flagged it and viewers would too.
+    """
+    text = text.strip()
+    if re.search(r"(?<!\.)[.!?][\"')\]]*$", text):
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", re.sub(r"(\.\.\.|…)$", "", text))
+    *complete, last = sentences
+    # Prefer cutting the unfinished sentence back to its last complete clause
+    if "," in last:
+        clause = last.rsplit(",", 1)[0].strip()
+        if len(clause.split()) >= 6:
+            return " ".join([*complete, clause + "."])
+    if complete and len(" ".join(complete).split()) >= 40:
+        return " ".join(complete)
+    return re.sub(r"[\s.,;:…-]+$", "", text) + "."
+
+
 def _estimate_duration(text: str) -> float:
     words = len(text.split())
     return (words / _words_per_minute()) * 60
@@ -100,8 +121,9 @@ Requirements:
 - Structure: Hook → 2-3 punchy beats that escalate → twist/payoff line
 - The FIRST sentence is the spoken hook: max 12 words, states the most surprising
   part immediately (no slow build-up, no "Did you know", no "Imagine")
-- The LAST sentence must flow back into the first sentence, so when the Short
-  loops it sounds continuous (e.g. ends on a setup that the opening line answers)
+- The LAST sentence must be a COMPLETE sentence ending in a full stop — never trail
+  off with "...", "where", "which" or an unfinished clause. It should land the payoff
+  and naturally invite a rewatch of the opening line.
 - No "follow for more", "subscribe", "Hey guys", "In today's video" phrases
 - Natural conversational English — short sentences, not formal or robotic
 - One clear central idea
@@ -158,7 +180,7 @@ Respond ONLY in this exact JSON format with no markdown:
 
         candidates: list[ScriptCandidate] = []
         for s in scripts_data:
-            text_body = s.get("text", "").strip()
+            text_body = _ensure_complete_ending(s.get("text", "").strip())
             if not text_body or len(text_body.split()) < 20:
                 continue
             wc = len(text_body.split())

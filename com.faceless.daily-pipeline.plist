@@ -26,14 +26,31 @@
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 
-  <!-- Run every day at 06:30 PM IST -->
+  <!-- Daily at 6:30 PM IST, with automatic retry slots at 8:00 and 9:30 PM.
+       run_daily.py exits immediately if today's video is already uploaded,
+       and resumes today's job if an earlier slot failed.
+       Keep in sync with RUN_SLOTS in scripts/run_daily.py. -->
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>18</integer>
-    <key>Minute</key>
-    <integer>30</integer>
-  </dict>
+  <array>
+    <dict>
+      <key>Hour</key>
+      <integer>18</integer>
+      <key>Minute</key>
+      <integer>30</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>20</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>21</integer>
+      <key>Minute</key>
+      <integer>30</integer>
+    </dict>
+  </array>
 
   <!-- Log stdout/stderr -->
   <key>StandardOutPath</key>

@@ -10,13 +10,19 @@ Usage:
     python scripts/run_daily.py --dry-run         # skip YouTube upload
     python scripts/run_daily.py --topic "..."     # inject specific topic
     python scripts/run_daily.py --resume          # continue a stuck/failed run
+
+launchd runs this at several evening slots (RUN_SLOTS). The first creates the
+day's job; later slots resume it if it failed, or exit if it already uploaded.
 """
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -26,6 +32,61 @@ from rich.panel import Panel
 
 console = Console()
 app = typer.Typer()
+
+# Must match the StartCalendarInterval slots in com.faceless.daily-pipeline.plist
+RUN_SLOTS = ["18:30", "20:00", "21:30"]
+
+
+def _job_local_date(job_id: str, tz: str):
+    """Job ids embed their UTC start time: daily_YYYYMMDD_HHMMSS_xxxxxx."""
+    stamp = datetime.strptime(job_id.split("_")[1] + job_id.split("_")[2], "%Y%m%d%H%M%S")
+    return stamp.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz)).date()
+
+
+def _notify(title: str, message: str) -> None:
+    """macOS notification so the owner sees the outcome without opening logs."""
+    # Text goes in as argv so quotes in error messages can't break the AppleScript
+    subprocess.run(
+        ["osascript",
+         "-e", "on run argv",
+         "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+         "-e", "end run",
+         title, message[:220]],
+        check=False, capture_output=True,
+    )
+
+
+async def _report(db, job, success: bool) -> None:
+    """Notify + append one line to logs/daily_summary.log for every run."""
+    from sqlalchemy import select
+    from app.config import settings
+    from app.database import Publication, Video
+
+    url = None
+    if success:
+        url = (await db.execute(
+            select(Publication.platform_url)
+            .join(Video, Video.id == Publication.video_id)
+            .where(Video.job_id == job.job_id, Publication.platform == "youtube",
+                   Publication.platform_url.is_not(None))
+            .order_by(Publication.id.desc()).limit(1)
+        )).scalar_one_or_none()
+
+    now = datetime.now(ZoneInfo(settings.timezone))
+    later = [s for s in RUN_SLOTS if s > now.strftime("%H:%M")]
+    if success and job.error_message:
+        title, msg = "⚠️ Short uploaded — needs your check", f"{url} — {job.error_message}"
+    elif success:
+        title, msg = "✅ Today's Short uploaded (private)", f"Approve in YouTube Studio: {url}"
+    else:
+        retry = f"Auto-retry at {later[0]}." if later else "No more retries today."
+        title, msg = "❌ Daily Short failed", f"Stage {job.stage}: {job.error_message} — {retry}"
+
+    _notify(title, msg)
+    summary = settings.log_file.parent / "daily_summary.log"
+    summary.parent.mkdir(parents=True, exist_ok=True)
+    with summary.open("a", encoding="utf-8") as f:
+        f.write(f"{now:%Y-%m-%d %H:%M} | {job.job_id} | {title} | {msg}\n")
 
 
 async def run(dry_run: bool, topic: str | None, resume: bool = False) -> bool:
@@ -65,23 +126,49 @@ async def run(dry_run: bool, topic: str | None, resume: bool = False) -> bool:
 
     start = time.time()
     async with SessionLocal() as db:
+        from sqlalchemy import select
         from app.scheduler.daily_pipeline import DailyPipeline, create_and_run_daily_job
-        if resume:
-            # Continue the latest unfinished job from its last saved stage (same topic/script)
-            from sqlalchemy import select
-            job = (await db.execute(
-                select(Job)
-                .where(Job.job_type == "daily_pipeline", Job.status != JobStatus.COMPLETED)
-                .order_by(Job.id.desc())
-                .limit(1)
-            )).scalar_one_or_none()
-            if not job:
-                console.print("[red]No unfinished job to resume[/red]")
-                return False
-            console.print(f"[dim]Resuming {job.job_id} from stage {job.stage}[/dim]")
+
+        latest = (await db.execute(
+            select(Job).where(Job.job_type == "daily_pipeline").order_by(Job.id.desc()).limit(1)
+        )).scalar_one_or_none()
+        today = datetime.now(ZoneInfo(settings.timezone)).date()
+        is_today = latest is not None and _job_local_date(latest.job_id, settings.timezone) == today
+
+        if is_today and latest.status == JobStatus.COMPLETED and not resume:
+            # launchd fires several times an evening as automatic retries;
+            # once today's video is out, later slots do nothing
+            console.print("[green]Today's video is already done — nothing to do.[/green]")
+            return True
+
+        if resume and latest is None:
+            console.print("[red]No job to resume[/red]")
+            return False
+
+        if resume or (is_today and latest.status != JobStatus.COMPLETED):
+            # Continue today's unfinished job from its last saved stage (same topic/script)
+            console.print(f"[dim]Resuming {latest.job_id} from stage {latest.stage}[/dim]")
+            job = latest
             success = await DailyPipeline(db, job).run()
         else:
+            # A process killed mid-run leaves its job RUNNING, which would block
+            # every future run — close out stale jobs from earlier days first
+            stale = (await db.execute(
+                select(Job).where(
+                    Job.job_type == "daily_pipeline",
+                    Job.status.in_([JobStatus.RUNNING, JobStatus.PENDING]),
+                )
+            )).scalars().all()
+            for s in stale:
+                s.status = JobStatus.FAILED
+                s.error_message = (s.error_message or "") + " [abandoned: superseded by next day's run]"
+            await db.commit()
             success = await create_and_run_daily_job(db)
+            job = (await db.execute(
+                select(Job).where(Job.job_type == "daily_pipeline").order_by(Job.id.desc()).limit(1)
+            )).scalar_one()
+
+        await _report(db, job, success)
 
     elapsed = time.time() - start
     if success:
