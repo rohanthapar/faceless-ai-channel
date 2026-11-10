@@ -14,8 +14,10 @@ from app.logger import get_logger
 
 logger = get_logger("content.gemini")
 
-# Primary first; the fallback model is only used when the primary stays overloaded
-GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash"]
+# Primary first; fallbacks are only used when the one before stays overloaded.
+# Newest models get the demand spikes — older ones often still answer (seen
+# 2026-11-10: 3.8 and 3.7 both 503 while 3.6 and 3.5 replied in seconds).
+GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
 
 _TRANSIENT = ("503", "UNAVAILABLE", "overloaded", "429", "RESOURCE_EXHAUSTED")
 
