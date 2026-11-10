@@ -9,6 +9,7 @@ Usage:
     python scripts/run_daily.py                   # full pipeline with upload
     python scripts/run_daily.py --dry-run         # skip YouTube upload
     python scripts/run_daily.py --topic "..."     # inject specific topic
+    python scripts/run_daily.py --resume          # continue a stuck/failed run
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ console = Console()
 app = typer.Typer()
 
 
-async def run(dry_run: bool, topic: str | None) -> bool:
+async def run(dry_run: bool, topic: str | None, resume: bool = False) -> bool:
     from app.config import settings
     from app.database import Base, SessionLocal, Job, JobStatus, Topic as TopicModel, ContentPillar, TopicStatus
     from sqlalchemy.ext.asyncio import create_async_engine
@@ -64,8 +65,23 @@ async def run(dry_run: bool, topic: str | None) -> bool:
 
     start = time.time()
     async with SessionLocal() as db:
-        from app.scheduler.daily_pipeline import create_and_run_daily_job
-        success = await create_and_run_daily_job(db)
+        from app.scheduler.daily_pipeline import DailyPipeline, create_and_run_daily_job
+        if resume:
+            # Continue the latest unfinished job from its last saved stage (same topic/script)
+            from sqlalchemy import select
+            job = (await db.execute(
+                select(Job)
+                .where(Job.job_type == "daily_pipeline", Job.status != JobStatus.COMPLETED)
+                .order_by(Job.id.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            if not job:
+                console.print("[red]No unfinished job to resume[/red]")
+                return False
+            console.print(f"[dim]Resuming {job.job_id} from stage {job.stage}[/dim]")
+            success = await DailyPipeline(db, job).run()
+        else:
+            success = await create_and_run_daily_job(db)
 
     elapsed = time.time() - start
     if success:
@@ -87,8 +103,9 @@ async def run(dry_run: bool, topic: str | None) -> bool:
 def main(
     dry_run: bool = typer.Option(False, "--dry-run", help="Skip YouTube/Instagram upload"),
     topic: str = typer.Option(None, "--topic", "-t", help="Inject a specific topic title"),
+    resume: bool = typer.Option(False, "--resume", help="Resume the latest unfinished job"),
 ):
-    ok = asyncio.run(run(dry_run=dry_run, topic=topic))
+    ok = asyncio.run(run(dry_run=dry_run, topic=topic, resume=resume))
     raise SystemExit(0 if ok else 1)
 
 

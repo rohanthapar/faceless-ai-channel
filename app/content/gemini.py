@@ -25,6 +25,10 @@ _TRANSIENT = ("503", "UNAVAILABLE", "overloaded", "429", "RESOURCE_EXHAUSTED")
 # call stalls the whole daily run (seen: 13+ minutes on a single script call).
 CALL_TIMEOUT_SECONDS = 180
 
+# Index of the last model that answered. Later calls in the same run start
+# there instead of re-waiting through models that were just overloaded.
+_start_index = 0
+
 
 async def generate_text(prompt, attempts_per_model: int = 3) -> str:
     """Return Gemini's text response, retrying transient errors across models.
@@ -33,16 +37,20 @@ async def generate_text(prompt, attempts_per_model: int = 3) -> str:
     """
     from google import genai
 
+    global _start_index
     client = genai.Client(api_key=settings.gemini_api_key)
     last_exc: Exception | None = None
 
-    for model in GEMINI_MODELS:
+    # Last model that worked first, then the rest in priority order
+    order = GEMINI_MODELS[_start_index:] + GEMINI_MODELS[:_start_index]
+    for model in order:
         for attempt in range(attempts_per_model):
             try:
                 response = await asyncio.wait_for(
                     asyncio.to_thread(client.models.generate_content, model=model, contents=prompt),
                     timeout=CALL_TIMEOUT_SECONDS,
                 )
+                _start_index = GEMINI_MODELS.index(model)
                 return response.text.strip()
             except asyncio.TimeoutError as exc:
                 last_exc = exc
