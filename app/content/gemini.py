@@ -19,6 +19,10 @@ GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash"]
 
 _TRANSIENT = ("503", "UNAVAILABLE", "overloaded", "429", "RESOURCE_EXHAUSTED")
 
+# Gemini sometimes accepts a request and never answers; without a cap one hung
+# call stalls the whole daily run (seen: 13+ minutes on a single script call).
+CALL_TIMEOUT_SECONDS = 180
+
 
 async def generate_text(prompt, attempts_per_model: int = 3) -> str:
     """Return Gemini's text response, retrying transient errors across models.
@@ -33,10 +37,16 @@ async def generate_text(prompt, attempts_per_model: int = 3) -> str:
     for model in GEMINI_MODELS:
         for attempt in range(attempts_per_model):
             try:
-                response = await asyncio.to_thread(
-                    client.models.generate_content, model=model, contents=prompt,
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(client.models.generate_content, model=model, contents=prompt),
+                    timeout=CALL_TIMEOUT_SECONDS,
                 )
                 return response.text.strip()
+            except asyncio.TimeoutError as exc:
+                last_exc = exc
+                logger.warning("Gemini %s no response after %ds (attempt %d) — retrying",
+                               model, CALL_TIMEOUT_SECONDS, attempt + 1)
+                continue
             except Exception as exc:
                 if not any(t in str(exc) for t in _TRANSIENT):
                     raise
