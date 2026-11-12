@@ -37,6 +37,19 @@ app = typer.Typer()
 RUN_SLOTS = ["18:30", "20:00", "21:30"]
 
 
+def _wait_for_network(timeout_s: int = 300) -> bool:
+    """launchd fires right after the Mac wakes, often before Wi-Fi reconnects."""
+    import socket
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            socket.getaddrinfo("generativelanguage.googleapis.com", 443)
+            return True
+        except OSError:
+            time.sleep(10)
+    return False
+
+
 def _job_local_date(job_id: str, tz: str):
     """Job ids embed their UTC start time: daily_YYYYMMDD_HHMMSS_xxxxxx."""
     stamp = datetime.strptime(job_id.split("_")[1] + job_id.split("_")[2], "%Y%m%d%H%M%S")
@@ -95,6 +108,12 @@ async def run(dry_run: bool, topic: str | None, resume: bool = False) -> bool:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     console.rule("[bold blue]🤖 Faceless AI Channel — Daily Run[/bold blue]")
+
+    if not _wait_for_network():
+        later = [s for s in RUN_SLOTS if s > datetime.now(ZoneInfo(settings.timezone)).strftime("%H:%M")]
+        _notify("❌ Daily Short didn't start", "No internet connection after 5 minutes. "
+                + (f"Auto-retry at {later[0]}." if later else "No more retries today."))
+        return False
     console.print(f"Mode: {'[yellow]DRY RUN (no upload)[/yellow]' if dry_run else '[green]PRODUCTION (will upload)[/green]'}\n")
 
     # Init DB

@@ -272,6 +272,12 @@ async def generate_script(topic: Topic) -> Script | None:
     if settings.gemini_api_key:
         candidates = await _gemini_generate_script(topic)
 
+    if not candidates and settings.gemini_api_key:
+        # The template script reads as filler and won't pass review; failing lets
+        # the next scheduled slot retry with Gemini instead of shipping it
+        logger.error("Gemini script generation failed — not falling back to template")
+        return None
+
     if not candidates:
         logger.warning("Using template fallback script for: %s", topic.title[:60])
         candidates = [_template_script(topic)]

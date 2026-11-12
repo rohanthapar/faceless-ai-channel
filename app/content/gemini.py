@@ -19,7 +19,11 @@ logger = get_logger("content.gemini")
 # 2026-11-10: 3.8 and 3.7 both 503 while 3.6 and 3.5 replied in seconds).
 GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
 
-_TRANSIENT = ("503", "UNAVAILABLE", "overloaded", "429", "RESOURCE_EXHAUSTED")
+_TRANSIENT = (
+    "503", "UNAVAILABLE", "overloaded", "429", "RESOURCE_EXHAUSTED",
+    # Network not up yet (e.g. Mac just woke from sleep)
+    "nodename nor servname", "Name or service not known", "Errno 8", "Connection", "timed out",
+)
 
 # Gemini sometimes accepts a request and never answers; without a cap one hung
 # call stalls the whole daily run (seen: 13+ minutes on a single script call).
